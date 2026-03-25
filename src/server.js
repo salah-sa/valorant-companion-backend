@@ -508,14 +508,17 @@ app.get('/admin/stats', requireAdminKey, async (req, res) => {
 });
 
 // Health check
+// ── Pricing settings (stored in its own collection) ───────────────────────────
+const PricingSettings = mongoose.models.PricingSettings || mongoose.model('PricingSettings',
+  new mongoose.Schema({ key: String, value: mongoose.Schema.Types.Mixed }, { strict: false }));
+
 // ── Admin: Update pricing ─────────────────────────────────────────────────────
 app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
   try {
     const { daily_egp, daily_usd, weekly_egp, weekly_usd, monthly_egp, monthly_usd } = req.body;
-    // Store in AppVersion collection as a settings document
-    await AppVersion.findOneAndUpdate(
-      { channel: 'pricing' },
-      { channel: 'pricing', notes: JSON.stringify({ daily_egp, daily_usd, weekly_egp, weekly_usd, monthly_egp, monthly_usd }), released_at: new Date() },
+    await PricingSettings.findOneAndUpdate(
+      { key: 'pricing' },
+      { key: 'pricing', value: { daily_egp, daily_usd, weekly_egp, weekly_usd, monthly_egp, monthly_usd }, updated_at: new Date() },
       { upsert: true, new: true }
     );
     return res.json({ ok: true });
@@ -525,9 +528,9 @@ app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
 // ── Admin: Get pricing (for client sync) ──────────────────────────────────────
 app.get('/pricing', async (req, res) => {
   try {
-    const doc = await AppVersion.findOne({ channel: 'pricing' }).lean();
+    const doc = await PricingSettings.findOne({ key: 'pricing' }).lean();
     if (!doc) return res.json({ ok: true, pricing: null });
-    return res.json({ ok: true, pricing: JSON.parse(doc.notes) });
+    return res.json({ ok: true, pricing: doc.value });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
