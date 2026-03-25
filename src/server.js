@@ -508,6 +508,36 @@ app.get('/admin/stats', requireAdminKey, async (req, res) => {
 });
 
 // Health check
+// ── Admin: Adjust key duration ────────────────────────────────────────────────
+app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
+  try {
+    const { key_id, days } = req.body;
+    if (!key_id || typeof days !== 'number') return res.status(400).json({ error: 'key_id and days required' });
+    const key = await LicenseKey.findById(key_id);
+    if (!key) return res.status(404).json({ error: 'Key not found' });
+    if (key.expires_at) {
+      const base = key.expires_at > new Date() ? key.expires_at : new Date();
+      key.expires_at = new Date(base.getTime() + days * 86400000);
+    } else if (days < 0) {
+      // Lifetime key — set expiry to N days from now when reducing
+      key.expires_at = new Date(Date.now() + Math.abs(days) * 86400000);
+    }
+    await key.save();
+    return res.json({ ok: true, expires_at: key.expires_at });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// ── Admin: Hard delete key ─────────────────────────────────────────────────────
+app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
+  try {
+    const { key_id } = req.body;
+    if (!key_id) return res.status(400).json({ error: 'key_id required' });
+    await LicenseKey.findByIdAndDelete(key_id);
+    await Activation.deleteMany({ key_id });
+    return res.json({ ok: true });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
 // ── Keep-alive ping endpoint (for UptimeRobot) ────────────────────────────────
 // UptimeRobot pings /ping every 5 minutes to prevent Replit from sleeping
 app.get('/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
