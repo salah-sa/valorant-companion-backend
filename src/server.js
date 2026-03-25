@@ -508,6 +508,39 @@ app.get('/admin/stats', requireAdminKey, async (req, res) => {
 });
 
 // Health check
+// ── Admin: Update pricing ─────────────────────────────────────────────────────
+app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
+  try {
+    const { daily_egp, daily_usd, weekly_egp, weekly_usd, monthly_egp, monthly_usd } = req.body;
+    // Store in AppVersion collection as a settings document
+    await AppVersion.findOneAndUpdate(
+      { channel: 'pricing' },
+      { channel: 'pricing', notes: JSON.stringify({ daily_egp, daily_usd, weekly_egp, weekly_usd, monthly_egp, monthly_usd }), released_at: new Date() },
+      { upsert: true, new: true }
+    );
+    return res.json({ ok: true });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// ── Admin: Get pricing (for client sync) ──────────────────────────────────────
+app.get('/pricing', async (req, res) => {
+  try {
+    const doc = await AppVersion.findOne({ channel: 'pricing' }).lean();
+    if (!doc) return res.json({ ok: true, pricing: null });
+    return res.json({ ok: true, pricing: JSON.parse(doc.notes) });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// ── Admin: Pin/Unpin HWID ─────────────────────────────────────────────────────
+app.post('/admin/pin-hwid', requireAdminKey, async (req, res) => {
+  try {
+    const { key_id, pinned } = req.body;
+    if (!key_id) return res.status(400).json({ error: 'key_id required' });
+    await LicenseKey.findByIdAndUpdate(key_id, { hwid_pinned: !!pinned });
+    return res.json({ ok: true, pinned });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
 // ── Admin: Adjust key duration ────────────────────────────────────────────────
 app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
   try {
