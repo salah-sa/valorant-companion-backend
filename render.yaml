@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: valorant-companion-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: MONGODB_URI
+        sync: false        # Set this manually in Render dashboard
+      - key: JWT_SECRET
+        sync: false        # Set this manually in Render dashboard
+      - key: ADMIN_API_KEY
+        sync: false        # Set this manually in Render dashboard
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 30000
+      - key: RATE_LIMIT_MAX
+        value: 5
+      - key: HEARTBEAT_TIMEOUT_SECONDS
+        value: 180
+    healthCheckPath: /ping

@@ -508,6 +508,29 @@ app.get('/admin/stats', requireAdminKey, async (req, res) => {
 });
 
 // Health check
+// ── Keep-alive ping endpoint (for UptimeRobot) ────────────────────────────────
+// UptimeRobot pings /ping every 5 minutes to prevent Replit from sleeping
+app.get('/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// ── Self-ping (built-in keep-alive) ───────────────────────────────────────────
+// Replit sleeps after ~30min of inactivity. This self-ping runs every 4 minutes
+// as a backup so the server stays awake even if UptimeRobot hasn't been set up yet.
+// Only runs in production to avoid noise during local development.
+if (process.env.NODE_ENV === 'production') {
+  const SELF_URL = process.env.REPLIT_DEV_DOMAIN
+    ? `https://${process.env.REPLIT_DEV_DOMAIN}/ping`
+    : null;
+  if (SELF_URL) {
+    setInterval(async () => {
+      try {
+        const http = require('https');
+        http.get(SELF_URL, (r) => r.resume()).on('error', () => {});
+      } catch (_) {}
+    }, 4 * 60 * 1000); // every 4 minutes
+    console.log(`[KEEP-ALIVE] Self-ping active → ${SELF_URL}`);
+  }
+}
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString(), db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
