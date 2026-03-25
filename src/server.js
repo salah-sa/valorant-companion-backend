@@ -209,15 +209,19 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
     }
 
     // ── Success response ──────────────────────────────────────────────────────
+    // FIX: Added session_token and hwid_match fields that LicenseService expects
+    const session_token = crypto.randomBytes(32).toString('hex');
     return res.json({
-      valid:      true,
-      code:       'OK',
-      tier:       matchedDoc.tier,
-      label:      matchedDoc.label,
-      expires_at: matchedDoc.expires_at,            // null = lifetime
-      server_time: now.toISOString(),               // client uses this to detect clock skew
-      hwid_bound: matchedDoc.hwid,
-      message:    `${matchedDoc.tier.toUpperCase()} key accepted.`,
+      valid:         true,
+      code:          'OK',
+      tier:          matchedDoc.tier,
+      label:         matchedDoc.label,
+      expires_at:    matchedDoc.expires_at,         // null = lifetime
+      server_time:   now.toISOString(),             // client uses for clock skew detection
+      hwid_bound:    matchedDoc.hwid,               // the bound HWID value
+      hwid_match:    true,                          // FIX: client checks this field
+      session_token: session_token,                 // FIX: client stores for heartbeat auth
+      message:       `${matchedDoc.tier.toUpperCase()} key accepted.`,
     });
 
   } catch (err) {
