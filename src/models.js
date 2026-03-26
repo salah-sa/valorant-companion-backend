@@ -133,4 +133,26 @@ rateLimitSchema.index({ window_start: 1 }, { expireAfterSeconds: 3600 });
 
 const RateLimit = mongoose.model('RateLimit', rateLimitSchema);
 
-module.exports = { LicenseKey, Activation, Order, SecurityLog, AppVersion, RateLimit };
+// ══════════════════════════════════════════════════════════════════════════════
+// COMPLAINTS (User → Admin support messages)
+// ══════════════════════════════════════════════════════════════════════════════
+const complaintSchema = new mongoose.Schema({
+  subject:     { type: String, required: true },
+  message:     { type: String, required: true },
+  category:    { type: String, default: 'General' },
+  hwid:        { type: String, default: '', index: true },
+  ip_address:  { type: String, default: '' },
+  app_version: { type: String, default: '' },
+  status:      { type: String, enum: ['open', 'in_progress', 'resolved', 'closed'], default: 'open', index: true },
+  admin_reply: { type: String, default: '' },
+  created_at:  { type: Date, default: Date.now, index: true },
+  resolved_at: { type: Date, default: null },
+}, { versionKey: false });
+
+complaintSchema.index({ status: 1, created_at: -1 });
+// TTL: auto-delete resolved complaints after 6 months
+complaintSchema.index({ resolved_at: 1 }, { expireAfterSeconds: 15552000, partialFilterExpression: { resolved_at: { $ne: null } } });
+
+const Complaint = mongoose.model('Complaint', complaintSchema);
+
+module.exports = { LicenseKey, Activation, Order, SecurityLog, AppVersion, RateLimit, Complaint };

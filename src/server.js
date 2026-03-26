@@ -578,6 +578,100 @@ app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ROUTE: POST /complaint — User submits a complaint from the floating chat icon
+// ══════════════════════════════════════════════════════════════════════════════
+const { Complaint } = require('./models');
+
+const complaintLimiter = rateLimit({ windowMs: 5 * 60_000, max: 3, message: { ok: false, message: 'Too many complaints sent. Please wait 5 minutes.' } });
+
+app.post('/complaint', complaintLimiter, async (req, res) => {
+  const { subject, message, category, hwid, app_version } = req.body;
+  const ip = getIp(req);
+
+  if (!subject || !message) {
+    return res.status(400).json({ ok: false, message: 'Subject and message are required.' });
+  }
+  if (message.length < 10) {
+    return res.status(400).json({ ok: false, message: 'Message too short.' });
+  }
+
+  try {
+    const complaint = await Complaint.create({
+      subject:     subject.trim().slice(0, 120),
+      message:     message.trim().slice(0, 1000),
+      category:    (category || 'General').slice(0, 60),
+      hwid:        (hwid || '').trim().slice(0, 64),
+      app_version: (app_version || '').trim().slice(0, 20),
+      ip_address:  ip,
+      status:      'open',
+    });
+
+    // Notify admin via Telegram
+    const tgText = `💬 <b>NEW COMPLAINT</b>\n` +
+      `📋 Subject: <b>${subject}</b>\n` +
+      `🏷️ Category: ${category || 'General'}\n` +
+      `💬 Message: ${message.slice(0, 200)}${message.length > 200 ? '...' : ''}\n` +
+      `💻 HWID: <code>${hwid || 'N/A'}</code>\n` +
+      `🔢 App: v${app_version || 'N/A'}\n` +
+      `🆔 ID: <code>${complaint._id}</code>\n` +
+      `🕐 Time: ${new Date().toUTCString()}`;
+    await notifyTelegram(tgText);
+
+    return res.json({ ok: true, complaint_id: complaint._id, message: 'Complaint received! We will respond soon.' });
+  } catch (err) {
+    console.error('[complaint]', err);
+    return res.status(500).json({ ok: false, message: 'Failed to submit complaint. Try again.' });
+  }
+});
+
+// ── Admin: List complaints ────────────────────────────────────────────────────
+app.get('/admin/complaints', requireAdminKey, async (req, res) => {
+  const status = req.query.status;
+  const filter = status ? { status } : {};
+  try {
+    const complaints = await Complaint.find(filter).sort({ created_at: -1 }).limit(200).lean();
+    return res.json({ ok: true, complaints });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin: Update complaint status / reply ────────────────────────────────────
+app.post('/admin/update-complaint', requireAdminKey, async (req, res) => {
+  const { complaint_id, status, admin_reply } = req.body;
+  try {
+    const upd = {};
+    if (status)      upd.status      = status;
+    if (admin_reply) upd.admin_reply = admin_reply;
+    if (status === 'resolved') upd.resolved_at = new Date();
+    await Complaint.updateOne({ _id: complaint_id }, { $set: upd });
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ROUTE: GET /my-orders?hwid=... — Returns all orders for a given HWID
+// ══════════════════════════════════════════════════════════════════════════════
+app.get('/my-orders', async (req, res) => {
+  const { hwid } = req.query;
+  if (!hwid || hwid.length < 4) {
+    return res.status(400).json({ ok: false, message: 'HWID required.' });
+  }
+  try {
+    const orders = await Order.find({ hwid: hwid.trim().toUpperCase() })
+      .sort({ created_at: -1 })
+      .limit(50)
+      .select('-ip_address -machine_name -os_version') // don't expose system info
+      .lean();
+    return res.json({ ok: true, orders });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Keep-alive ping endpoint (for UptimeRobot) ────────────────────────────────
 // UptimeRobot pings /ping every 5 minutes to prevent Replit from sleeping
 app.get('/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
