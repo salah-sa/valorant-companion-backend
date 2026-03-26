@@ -160,6 +160,24 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
     return res.status(400).json({ valid: false, code: 'INVALID_INPUT', message: 'Invalid HWID.' });
   }
 
+  // ── Version gate inside validate-key (catches ALL clients including old ones) ──
+  // Old clients send app_version in body; new ones also send X-App-Version header.
+  const clientVer = (req.headers['x-app-version'] || app_version || '0.0.0')
+    .toString().replace(/[^0-9.]/g, '');
+  if (compareVersions(clientVer, MINIMUM_VERSION) < 0) {
+    const latest = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 }).lean();
+    return res.status(426).json({
+      valid:           false,
+      code:            'UPDATE_REQUIRED',
+      update_required: true,
+      minimum_version: MINIMUM_VERSION,
+      latest_version:  latest?.version || MINIMUM_VERSION,
+      download_url:    MANDATORY_DOWNLOAD_URL,
+      message:         'Your version (v' + (clientVer || '?') + ') is outdated. Download v' + (latest?.version || MINIMUM_VERSION) + ' to continue.',
+    });
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
+
   // Sanitize
   const normalKey = normalizeKey(rawKey);
   const pfx       = keyPrefix(normalKey);
