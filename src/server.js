@@ -31,7 +31,7 @@ app.set('trust proxy', 1);
 // Exempt routes: /check-update, /ping, /health, /pricing, /admin/*
 const MINIMUM_VERSION = '1.1.6';
 
-const VERSION_EXEMPT = ['/check-update', '/ping', '/health', '/pricing'];
+const VERSION_EXEMPT = ['/check-update', '/health', '/pricing'];
 
 app.use((req, res, next) => {
   // Skip exempt routes and all admin routes
@@ -741,7 +741,21 @@ app.get('/my-orders', async (req, res) => {
 
 // â”€â”€ Keep-alive ping endpoint (for UptimeRobot) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // UptimeRobot pings /ping every 5 minutes to prevent Replit from sleeping
-app.get('/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
+app.get('/ping', (req, res) => {
+  // Version-aware ping - old clients get 503 which SplashScreen treats as "Server Offline"
+  const clientVer = (req.headers['x-app-version'] || req.query.version || '0.0.0')
+    .toString().replace(/[^0-9.]/g, '');
+  if (compareVersions(clientVer, MINIMUM_VERSION) < 0) {
+    return res.status(503).json({
+      ok:              false,
+      update_required: true,
+      minimum_version: MINIMUM_VERSION,
+      download_url:    MANDATORY_DOWNLOAD_URL,
+      message:         'Update required: v' + MINIMUM_VERSION,
+    });
+  }
+  return res.json({ ok: true, ts: Date.now() });
+});
 
 // â”€â”€ Self-ping (built-in keep-alive) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Replit sleeps after ~30min of inactivity. This self-ping runs every 4 minutes
