@@ -31,16 +31,6 @@ app.set('trust proxy', 1);
 // Exempt routes: /check-update, /ping, /health, /pricing, /admin/*
 const MINIMUM_VERSION = '1.1.6';
 
-function compareVersions(a, b) {
-  const pa = String(a).split('.').map(Number);
-  const pb = String(b).split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
 const VERSION_EXEMPT = ['/check-update', '/ping', '/health', '/pricing'];
 
 app.use((req, res, next) => {
