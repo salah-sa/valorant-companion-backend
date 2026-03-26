@@ -29,7 +29,7 @@ app.set('trust proxy', 1);
 // Old clients that don't send X-App-Version or send a version < MINIMUM_VERSION
 // receive 426 Upgrade Required, which the client maps to the forced-update dialog.
 // Exempt routes: /check-update, /ping, /health, /pricing, /admin/*
-const MINIMUM_VERSION = '1.1.6';
+const MINIMUM_VERSION = '1.1.7';
 
 const VERSION_EXEMPT = ['/check-update', '/health', '/pricing'];
 
@@ -814,4 +814,5 @@ app.listen(PORT, '0.0.0.0', () => {
 process.on('unhandledRejection', (reason) => {
   console.error('[UNHANDLED REJECTION]', reason);
 });
+
 
