@@ -24,6 +24,47 @@ app.use(cors({ origin: false }));          // API-only, no browser CORS needed
 app.use(express.json({ limit: '16kb' }));  // prevent payload bombs
 app.set('trust proxy', 1);
 
+// ── Version Gate Middleware ─────────────────────────────────────────────────
+// Blocks all protected API calls from outdated clients.
+// Old clients that don't send X-App-Version or send a version < MINIMUM_VERSION
+// receive 426 Upgrade Required, which the client maps to the forced-update dialog.
+// Exempt routes: /check-update, /ping, /health, /pricing, /admin/*
+const MINIMUM_VERSION = '1.1.6';
+
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+const VERSION_EXEMPT = ['/check-update', '/ping', '/health', '/pricing'];
+
+app.use((req, res, next) => {
+  // Skip exempt routes and all admin routes
+  if (VERSION_EXEMPT.includes(req.path) || req.path.startsWith('/admin')) return next();
+
+  const clientVersion = (req.headers['x-app-version'] || req.body?.app_version || '0.0.0')
+    .toString().replace(/[^0-9.]/g, '');
+
+  if (compareVersions(clientVersion, MINIMUM_VERSION) < 0) {
+    return res.status(426).json({
+      error:           'update_required',
+      update_required: true,
+      minimum_version: MINIMUM_VERSION,
+      latest_version:  MINIMUM_VERSION,
+      download_url:    'https://sasa120120.itch.io/valorant-companion-app/download/eyJpZCI6NDQxODI5NCwiZXhwaXJlcyI6MTc3NDQ4NjQ1MH0%3d%2ev0Oyz%2f8pnRmQ9vOGL3uSnjoTCbU%3d',
+      message:         'Your version is outdated. Please download the latest version (v' + MINIMUM_VERSION + ') to continue.',
+    });
+  }
+  next();
+});
+// ───────────────────────────────────────────────────────────────────────────
+
+
 // â”€â”€ Global rate limiter (all routes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const globalLimiter = rateLimit({
   windowMs: 60_000,
