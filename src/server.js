@@ -1,4 +1,4 @@
-// ── ValorantCompanion — Production Backend Server ────────────────────────────
+﻿// â”€â”€ ValorantCompanion â€” Production Backend Server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Node.js + Express | MongoDB | Full license/order/update system
 
 'use strict';
@@ -18,13 +18,13 @@ const { LicenseKey, Activation, Order, SecurityLog, AppVersion } = require('./mo
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── Security middleware ───────────────────────────────────────────────────────
+// â”€â”€ Security middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.use(helmet());
 app.use(cors({ origin: false }));          // API-only, no browser CORS needed
 app.use(express.json({ limit: '16kb' }));  // prevent payload bombs
 app.set('trust proxy', 1);
 
-// ── Global rate limiter (all routes) ─────────────────────────────────────────
+// â”€â”€ Global rate limiter (all routes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const globalLimiter = rateLimit({
   windowMs: 60_000,
   max: 60,
@@ -34,7 +34,7 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-// ── Strict limiter for key validation (5 attempts per 30 sec per IP) ─────────
+// â”€â”€ Strict limiter for key validation (5 attempts per 30 sec per IP) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const validateLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 30_000,
   max:      parseInt(process.env.RATE_LIMIT_MAX)       || 5,
@@ -46,7 +46,7 @@ const validateLimiter = rateLimit({
   }
 });
 
-// ── MongoDB connect ───────────────────────────────────────────────────────────
+// â”€â”€ MongoDB connect â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 30000,
@@ -54,7 +54,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 .then(() => console.log('[DB] MongoDB connected'))
 .catch(err => { console.error('[DB] Connection failed:', err.message); process.exit(1); });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function getIp(req) {
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
 }
@@ -94,7 +94,7 @@ function requireAdminKey(req, res, next) {
   next();
 }
 
-// ── Telegram notification ─────────────────────────────────────────────────────
+// â”€â”€ Telegram notification â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function notifyTelegram(text) {
   const token  = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -113,15 +113,15 @@ async function notifyTelegram(text) {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ROUTE: POST /validate-key
 // Client calls this on every launch and periodically (heartbeat)
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 app.post('/validate-key', validateLimiter, async (req, res) => {
   const { key: rawKey, hwid, app_version = '', is_heartbeat = false } = req.body;
   const ip = getIp(req);
 
-  // ── Input validation ──────────────────────────────────────────────────────
+  // â”€â”€ Input validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (!rawKey || typeof rawKey !== 'string' || rawKey.length < 8 || rawKey.length > 64) {
     return res.status(400).json({ valid: false, code: 'INVALID_INPUT', message: 'Invalid key format.' });
   }
@@ -135,7 +135,7 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
   const safeHwid  = hwid.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32);
 
   try {
-    // ── Find candidates by prefix (avoids full-table bcrypt scan) ────────────
+    // â”€â”€ Find candidates by prefix (avoids full-table bcrypt scan) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const candidates = await LicenseKey.find({ key_prefix: pfx }).lean();
 
     let matchedDoc = null;
@@ -144,33 +144,33 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
       if (ok) { matchedDoc = doc; break; }
     }
 
-    // ── Not found ─────────────────────────────────────────────────────────────
+    // â”€â”€ Not found â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (!matchedDoc) {
       await logSecurity('security', `Invalid key attempt`, ip, pfx, safeHwid);
       return res.json({ valid: false, code: 'INVALID_KEY', message: 'Key not recognised.' });
     }
 
-    // ── Banned ────────────────────────────────────────────────────────────────
+    // â”€â”€ Banned â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (matchedDoc.is_banned) {
       await logSecurity('security', `Banned key attempt`, ip, pfx, safeHwid);
       return res.json({ valid: false, code: 'BANNED', message: 'This key has been banned.' });
     }
 
-    // ── Inactive / revoked ────────────────────────────────────────────────────
+    // â”€â”€ Inactive / revoked â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (!matchedDoc.is_active) {
       return res.json({ valid: false, code: 'REVOKED', message: 'This key has been revoked.' });
     }
 
-    // ── Expiry check using SERVER TIME (prevents clock rollback) ──────────────
+    // â”€â”€ Expiry check using SERVER TIME (prevents clock rollback) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const now = new Date();
     if (matchedDoc.expires_at && matchedDoc.expires_at < now) {
       await logSecurity('info', `Expired key attempt`, ip, pfx, safeHwid);
       return res.json({ valid: false, code: 'EXPIRED', message: 'This key has expired.', expires_at: matchedDoc.expires_at });
     }
 
-    // ── HWID binding ──────────────────────────────────────────────────────────
+    // â”€â”€ HWID binding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (!matchedDoc.hwid) {
-      // First activation — bind
+      // First activation â€” bind
       await LicenseKey.updateOne({ _id: matchedDoc._id }, { $set: { hwid: safeHwid } });
       matchedDoc.hwid = safeHwid;
       await logSecurity('info', `Key bound to HWID ${safeHwid}`, ip, pfx, safeHwid);
@@ -184,10 +184,10 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
       });
     }
 
-    // ── Update last_used_at ───────────────────────────────────────────────────
+    // â”€â”€ Update last_used_at â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     await LicenseKey.updateOne({ _id: matchedDoc._id }, { $set: { last_used_at: now } });
 
-    // ── Session / heartbeat ───────────────────────────────────────────────────
+    // â”€â”€ Session / heartbeat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (!is_heartbeat) {
       // New session
       await Activation.create({
@@ -208,7 +208,7 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
       );
     }
 
-    // ── Success response ──────────────────────────────────────────────────────
+    // â”€â”€ Success response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // FIX: Added session_token and hwid_match fields that LicenseService expects
     const session_token = crypto.randomBytes(32).toString('hex');
     return res.json({
@@ -231,9 +231,9 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ROUTE: POST /submit-order
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 const orderLimiter = rateLimit({ windowMs: 60_000, max: 3, message: { error: 'Too many orders. Wait a minute.' } });
 
 app.post('/submit-order', orderLimiter, async (req, res) => {
@@ -268,15 +268,15 @@ app.post('/submit-order', orderLimiter, async (req, res) => {
     });
 
     // Notify admin via Telegram
-    const tgText = `🛒 <b>NEW ORDER</b>\n` +
-      `📦 Plan: <b>${plan.toUpperCase()}</b> — ${price.egp} EGP (${price.usd})\n` +
-      `👤 Name: ${user_name}\n` +
-      `📱 Phone: ${phone_number}\n` +
-      `🌍 Country: ${country || 'N/A'}\n` +
-      `📧 Email: ${email || 'N/A'}\n` +
-      `🆔 Order ID: <code>${order._id}</code>\n` +
-      `💻 HWID: <code>${hwid || 'N/A'}</code>\n` +
-      `🕐 Time: ${new Date().toUTCString()}`;
+    const tgText = `ðŸ›’ <b>NEW ORDER</b>\n` +
+      `ðŸ“¦ Plan: <b>${plan.toUpperCase()}</b> â€” ${price.egp} EGP (${price.usd})\n` +
+      `ðŸ‘¤ Name: ${user_name}\n` +
+      `ðŸ“± Phone: ${phone_number}\n` +
+      `ðŸŒ Country: ${country || 'N/A'}\n` +
+      `ðŸ“§ Email: ${email || 'N/A'}\n` +
+      `ðŸ†” Order ID: <code>${order._id}</code>\n` +
+      `ðŸ’» HWID: <code>${hwid || 'N/A'}</code>\n` +
+      `ðŸ• Time: ${new Date().toUTCString()}`;
     await notifyTelegram(tgText);
 
     await logSecurity('info', `New order submitted plan=${plan}`, ip, '', hwid || '', { order_id: order._id });
@@ -292,9 +292,12 @@ app.post('/submit-order', orderLimiter, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ROUTE: GET /check-update?version=1.0.0
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Mandatory update download URL - always sent to client when is_mandatory=true
+const MANDATORY_DOWNLOAD_URL = 'https://sasa120120.itch.io/valorant-companion-app/download/eyJpZCI6NDQxODI5NCwiZXhwaXJlcyI6MTc3NDQ4NjQ1MH0%3d%2ev0Oyz%2f8pnRmQ9vOGL3uSnjoTCbU%3d';
+
 app.get('/check-update', async (req, res) => {
   const clientVersion = (req.query.version || '0.0.0').replace(/[^0-9.]/g, '');
   try {
@@ -302,13 +305,28 @@ app.get('/check-update', async (req, res) => {
     if (!latest) return res.json({ update_available: false });
 
     const needsUpdate = compareVersions(latest.version, clientVersion) > 0;
+
+    // Always use itch.io URL for mandatory updates regardless of DB value
+    const downloadUrl = needsUpdate
+      ? (latest.is_mandatory ? MANDATORY_DOWNLOAD_URL : (latest.download_url || MANDATORY_DOWNLOAD_URL))
+      : null;
+
+    // Build a rich message the client will display in the mandatory update dialog
+    const updateMessage = (needsUpdate && latest.is_mandatory)
+      ? 'New Update Available!\n\n' +
+        'A mandatory update (v' + latest.version + ') is required to continue using VALORANT Companion.\n\n' +
+        (latest.release_notes ? latest.release_notes + '\n\n' : '') +
+        'Press \"Update\" to open the download page, or \"Exit\" to close the app.'
+      : null;
+
     return res.json({
       update_available: needsUpdate,
       latest_version:   latest.version,
-      download_url:     needsUpdate ? latest.download_url : null,
+      download_url:     downloadUrl,
       release_notes:    needsUpdate ? latest.release_notes : null,
       is_mandatory:     needsUpdate ? latest.is_mandatory  : false,
       checksum_sha256:  needsUpdate ? latest.checksum_sha256 : null,
+      update_message:   updateMessage,
       server_time:      new Date().toISOString(),
     });
   } catch (err) {
@@ -317,9 +335,9 @@ app.get('/check-update', async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ADMIN ROUTES — protected by x-admin-key header
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ADMIN ROUTES â€” protected by x-admin-key header
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 // Generate a new license key
 app.post('/admin/generate-key', requireAdminKey, async (req, res) => {
@@ -336,7 +354,7 @@ app.post('/admin/generate-key', requireAdminKey, async (req, res) => {
   // FIX: key format was "VS-XXXXXXXX-XXXXXXXXXXXXXXXXXXXXXXXX" (prefix 8 chars = "VS-XXXXX")
   // but key_prefix was sliced from the raw key which starts with e.g. "VS-" (3 chars) + 5 hex chars.
   // The prefix lookup on validate uses keyPrefix() which normalizes and takes first 8 chars of the
-  // full key — this is consistent. However, the rand was 32 hex chars (16 bytes * 2) but only
+  // full key â€” this is consistent. However, the rand was 32 hex chars (16 bytes * 2) but only
   // slice(0,8) and slice(8) were used giving 8+24=32 chars total key body. This is correct.
   // FIX: ensure key_prefix is derived from the normalized key (uppercase, trimmed) for consistent lookups.
   const prefix = { standard: 'VS', pro: 'VP', lifetime: 'VL', admin: 'VA' }[tier];
@@ -501,8 +519,8 @@ app.get('/admin/stats', requireAdminKey, async (req, res) => {
       activeSessions,
       pendingOrders,
       totalOrders,
-      expiredKeys,    // FIX: new field — client uses for ExpiredKeyCount display
-      revokedKeys,    // FIX: new field — client uses for RevokedKeyCount display
+      expiredKeys,    // FIX: new field â€” client uses for ExpiredKeyCount display
+      revokedKeys,    // FIX: new field â€” client uses for RevokedKeyCount display
       tierBreakdown,
       recentSecurityEvents: recentLogs,
     });
@@ -512,11 +530,11 @@ app.get('/admin/stats', requireAdminKey, async (req, res) => {
 });
 
 // Health check
-// ── Pricing settings (stored in its own collection) ───────────────────────────
+// â”€â”€ Pricing settings (stored in its own collection) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const PricingSettings = mongoose.models.PricingSettings || mongoose.model('PricingSettings',
   new mongoose.Schema({ key: String, value: mongoose.Schema.Types.Mixed }, { strict: false }));
 
-// ── Admin: Update pricing ─────────────────────────────────────────────────────
+// â”€â”€ Admin: Update pricing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
   try {
     const { daily_egp, daily_usd, weekly_egp, weekly_usd, monthly_egp, monthly_usd } = req.body;
@@ -529,7 +547,7 @@ app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ── Admin: Get pricing (for client sync) ──────────────────────────────────────
+// â”€â”€ Admin: Get pricing (for client sync) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/pricing', async (req, res) => {
   try {
     const doc = await PricingSettings.findOne({ key: 'pricing' }).lean();
@@ -538,7 +556,7 @@ app.get('/pricing', async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ── Admin: Pin/Unpin HWID ─────────────────────────────────────────────────────
+// â”€â”€ Admin: Pin/Unpin HWID â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/admin/pin-hwid', requireAdminKey, async (req, res) => {
   try {
     const { key_id, pinned } = req.body;
@@ -548,7 +566,7 @@ app.post('/admin/pin-hwid', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ── Admin: Adjust key duration ────────────────────────────────────────────────
+// â”€â”€ Admin: Adjust key duration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
   try {
     const { key_id, days } = req.body;
@@ -559,7 +577,7 @@ app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
       const base = key.expires_at > new Date() ? key.expires_at : new Date();
       key.expires_at = new Date(base.getTime() + days * 86400000);
     } else if (days < 0) {
-      // Lifetime key — set expiry to N days from now when reducing
+      // Lifetime key â€” set expiry to N days from now when reducing
       key.expires_at = new Date(Date.now() + Math.abs(days) * 86400000);
     }
     await key.save();
@@ -567,7 +585,7 @@ app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ── Admin: Hard delete key ─────────────────────────────────────────────────────
+// â”€â”€ Admin: Hard delete key â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
   try {
     const { key_id } = req.body;
@@ -578,9 +596,9 @@ app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ROUTE: POST /complaint — User submits a complaint from the floating chat icon
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ROUTE: POST /complaint â€” User submits a complaint from the floating chat icon
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 const { Complaint } = require('./models');
 
 const complaintLimiter = rateLimit({ windowMs: 5 * 60_000, max: 3, message: { ok: false, message: 'Too many complaints sent. Please wait 5 minutes.' } });
@@ -608,14 +626,14 @@ app.post('/complaint', complaintLimiter, async (req, res) => {
     });
 
     // Notify admin via Telegram
-    const tgText = `💬 <b>NEW COMPLAINT</b>\n` +
-      `📋 Subject: <b>${subject}</b>\n` +
-      `🏷️ Category: ${category || 'General'}\n` +
-      `💬 Message: ${message.slice(0, 200)}${message.length > 200 ? '...' : ''}\n` +
-      `💻 HWID: <code>${hwid || 'N/A'}</code>\n` +
-      `🔢 App: v${app_version || 'N/A'}\n` +
-      `🆔 ID: <code>${complaint._id}</code>\n` +
-      `🕐 Time: ${new Date().toUTCString()}`;
+    const tgText = `ðŸ’¬ <b>NEW COMPLAINT</b>\n` +
+      `ðŸ“‹ Subject: <b>${subject}</b>\n` +
+      `ðŸ·ï¸ Category: ${category || 'General'}\n` +
+      `ðŸ’¬ Message: ${message.slice(0, 200)}${message.length > 200 ? '...' : ''}\n` +
+      `ðŸ’» HWID: <code>${hwid || 'N/A'}</code>\n` +
+      `ðŸ”¢ App: v${app_version || 'N/A'}\n` +
+      `ðŸ†” ID: <code>${complaint._id}</code>\n` +
+      `ðŸ• Time: ${new Date().toUTCString()}`;
     await notifyTelegram(tgText);
 
     return res.json({ ok: true, complaint_id: complaint._id, message: 'Complaint received! We will respond soon.' });
@@ -625,7 +643,7 @@ app.post('/complaint', complaintLimiter, async (req, res) => {
   }
 });
 
-// ── Admin: List complaints ────────────────────────────────────────────────────
+// â”€â”€ Admin: List complaints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/admin/complaints', requireAdminKey, async (req, res) => {
   const status = req.query.status;
   const filter = status ? { status } : {};
@@ -637,7 +655,7 @@ app.get('/admin/complaints', requireAdminKey, async (req, res) => {
   }
 });
 
-// ── Admin: Update complaint status / reply ────────────────────────────────────
+// â”€â”€ Admin: Update complaint status / reply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/admin/update-complaint', requireAdminKey, async (req, res) => {
   const { complaint_id, status, admin_reply } = req.body;
   try {
@@ -652,9 +670,9 @@ app.post('/admin/update-complaint', requireAdminKey, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ROUTE: GET /my-orders?hwid=... — Returns all orders for a given HWID
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ROUTE: GET /my-orders?hwid=... â€” Returns all orders for a given HWID
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 app.get('/my-orders', async (req, res) => {
   const { hwid } = req.query;
   if (!hwid || hwid.length < 4) {
@@ -672,11 +690,11 @@ app.get('/my-orders', async (req, res) => {
   }
 });
 
-// ── Keep-alive ping endpoint (for UptimeRobot) ────────────────────────────────
+// â”€â”€ Keep-alive ping endpoint (for UptimeRobot) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // UptimeRobot pings /ping every 5 minutes to prevent Replit from sleeping
 app.get('/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
-// ── Self-ping (built-in keep-alive) ───────────────────────────────────────────
+// â”€â”€ Self-ping (built-in keep-alive) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Replit sleeps after ~30min of inactivity. This self-ping runs every 4 minutes
 // as a backup so the server stays awake even if UptimeRobot hasn't been set up yet.
 // Only runs in production to avoid noise during local development.
@@ -691,7 +709,7 @@ if (process.env.NODE_ENV === 'production') {
         http.get(SELF_URL, (r) => r.resume()).on('error', () => {});
       } catch (_) {}
     }, 4 * 60 * 1000); // every 4 minutes
-    console.log(`[KEEP-ALIVE] Self-ping active → ${SELF_URL}`);
+    console.log(`[KEEP-ALIVE] Self-ping active â†’ ${SELF_URL}`);
   }
 }
 
@@ -699,9 +717,9 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString(), db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // BACKGROUND JOBS
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 // Every 5 minutes: mark stale sessions as inactive
 cron.schedule('*/5 * * * *', async () => {
@@ -724,7 +742,7 @@ cron.schedule('0 * * * *', async () => {
   } catch {}
 });
 
-// ── Start server ──────────────────────────────────────────────────────────────
+// â”€â”€ Start server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[SERVER] ValorantCompanion Backend running on port ${PORT}`);
   console.log(`[SERVER] Environment: ${process.env.NODE_ENV}`);
@@ -733,3 +751,4 @@ app.listen(PORT, '0.0.0.0', () => {
 process.on('unhandledRejection', (reason) => {
   console.error('[UNHANDLED REJECTION]', reason);
 });
+
