@@ -1,4 +1,4 @@
-// ── ValorantCompanion — Production Backend Server ────────────────────────────
+// -- ValorantCompanion � Production Backend Server ----------------------------
 // Node.js + Express | MongoDB | Full license/order/update system
 
 'use strict';
@@ -18,7 +18,7 @@ const { LicenseKey, Activation, Order, SecurityLog, AppVersion } = require('./mo
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── Security middleware ───────────────────────────────────────────────────────
+// -- Security middleware -------------------------------------------------------
 app.use(helmet());
 app.use(cors({ origin: false }));          // API-only, no browser CORS needed
 app.use(express.json({ limit: '16kb' }));  // prevent payload bombs
@@ -29,7 +29,19 @@ app.set('trust proxy', 1);
 // Old clients that don't send X-App-Version or send a version < MINIMUM_VERSION
 // receive 426 Upgrade Required, which the client maps to the forced-update dialog.
 // Exempt routes: /check-update, /ping, /health, /pricing, /admin/*
-const MINIMUM_VERSION = '1.1.7';
+let MINIMUM_VERSION = '1.1.8'; // default; refreshed from DB after connect
+
+// Refresh MINIMUM_VERSION from DB so admin raises take effect without restart
+async function refreshMinimumVersion() {
+  try {
+    const latest = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 }).lean();
+    if (latest && latest.version) {
+      if (MINIMUM_VERSION !== latest.version)
+        console.log('[version] MINIMUM_VERSION: ' + MINIMUM_VERSION + ' -> ' + latest.version);
+      MINIMUM_VERSION = latest.version;
+    }
+  } catch (e) { console.error('[version] refresh error:', e.message); }
+}
 
 const VERSION_EXEMPT = ['/check-update', '/health', '/pricing'];
 
@@ -55,7 +67,7 @@ app.use((req, res, next) => {
 // ---------------------------------------------------------------------------
 
 
-// ── Global rate limiter (all routes) ─────────────────────────────────────────
+// -- Global rate limiter (all routes) -----------------------------------------
 const globalLimiter = rateLimit({
   windowMs: 60_000,
   max: 60,
@@ -65,7 +77,7 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-// ── Strict limiter for key validation (5 attempts per 30 sec per IP) ─────────
+// -- Strict limiter for key validation (5 attempts per 30 sec per IP) ---------
 const validateLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 30_000,
   max:      parseInt(process.env.RATE_LIMIT_MAX)       || 5,
@@ -77,15 +89,15 @@ const validateLimiter = rateLimit({
   }
 });
 
-// ── MongoDB connect ───────────────────────────────────────────────────────────
+// -- MongoDB connect -----------------------------------------------------------
 mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 30000,
 })
-.then(() => console.log('[DB] MongoDB connected'))
+.then(async () => { console.log('[DB] MongoDB connected'); await refreshMinimumVersion(); setInterval(refreshMinimumVersion, 60000); })
 .catch(err => { console.error('[DB] Connection failed:', err.message); process.exit(1); });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// -- Helpers -------------------------------------------------------------------
 function getIp(req) {
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
 }
@@ -125,7 +137,7 @@ function requireAdminKey(req, res, next) {
   next();
 }
 
-// ── Telegram notification ─────────────────────────────────────────────────────
+// -- Telegram notification -----------------------------------------------------
 async function notifyTelegram(text) {
   const token  = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -144,15 +156,15 @@ async function notifyTelegram(text) {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 // ROUTE: POST /validate-key
 // Client calls this on every launch and periodically (heartbeat)
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 app.post('/validate-key', validateLimiter, async (req, res) => {
   const { key: rawKey, hwid, app_version = '', is_heartbeat = false } = req.body;
   const ip = getIp(req);
 
-  // ── Input validation ──────────────────────────────────────────────────────
+  // -- Input validation ------------------------------------------------------
   if (!rawKey || typeof rawKey !== 'string' || rawKey.length < 8 || rawKey.length > 64) {
     return res.status(400).json({ valid: false, code: 'INVALID_INPUT', message: 'Invalid key format.' });
   }
@@ -184,7 +196,7 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
   const safeHwid  = hwid.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32);
 
   try {
-    // ── Find candidates by prefix (avoids full-table bcrypt scan) ────────────
+    // -- Find candidates by prefix (avoids full-table bcrypt scan) ------------
     const candidates = await LicenseKey.find({ key_prefix: pfx }).lean();
 
     let matchedDoc = null;
@@ -193,33 +205,33 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
       if (ok) { matchedDoc = doc; break; }
     }
 
-    // ── Not found ─────────────────────────────────────────────────────────────
+    // -- Not found -------------------------------------------------------------
     if (!matchedDoc) {
       await logSecurity('security', `Invalid key attempt`, ip, pfx, safeHwid);
       return res.json({ valid: false, code: 'INVALID_KEY', message: 'Key not recognised.' });
     }
 
-    // ── Banned ────────────────────────────────────────────────────────────────
+    // -- Banned ----------------------------------------------------------------
     if (matchedDoc.is_banned) {
       await logSecurity('security', `Banned key attempt`, ip, pfx, safeHwid);
       return res.json({ valid: false, code: 'BANNED', message: 'This key has been banned.' });
     }
 
-    // ── Inactive / revoked ────────────────────────────────────────────────────
+    // -- Inactive / revoked ----------------------------------------------------
     if (!matchedDoc.is_active) {
       return res.json({ valid: false, code: 'REVOKED', message: 'This key has been revoked.' });
     }
 
-    // ── Expiry check using SERVER TIME (prevents clock rollback) ──────────────
+    // -- Expiry check using SERVER TIME (prevents clock rollback) --------------
     const now = new Date();
     if (matchedDoc.expires_at && matchedDoc.expires_at < now) {
       await logSecurity('info', `Expired key attempt`, ip, pfx, safeHwid);
       return res.json({ valid: false, code: 'EXPIRED', message: 'This key has expired.', expires_at: matchedDoc.expires_at });
     }
 
-    // ── HWID binding ──────────────────────────────────────────────────────────
+    // -- HWID binding ----------------------------------------------------------
     if (!matchedDoc.hwid) {
-      // First activation — bind
+      // First activation � bind
       await LicenseKey.updateOne({ _id: matchedDoc._id }, { $set: { hwid: safeHwid } });
       matchedDoc.hwid = safeHwid;
       await logSecurity('info', `Key bound to HWID ${safeHwid}`, ip, pfx, safeHwid);
@@ -233,10 +245,10 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
       });
     }
 
-    // ── Update last_used_at ───────────────────────────────────────────────────
+    // -- Update last_used_at ---------------------------------------------------
     await LicenseKey.updateOne({ _id: matchedDoc._id }, { $set: { last_used_at: now } });
 
-    // ── Session / heartbeat ───────────────────────────────────────────────────
+    // -- Session / heartbeat ---------------------------------------------------
     if (!is_heartbeat) {
       // New session
       await Activation.create({
@@ -257,7 +269,7 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
       );
     }
 
-    // ── Success response ──────────────────────────────────────────────────────
+    // -- Success response ------------------------------------------------------
     // FIX: Added session_token and hwid_match fields that LicenseService expects
     const session_token = crypto.randomBytes(32).toString('hex');
     return res.json({
@@ -280,9 +292,9 @@ app.post('/validate-key', validateLimiter, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 // ROUTE: POST /submit-order
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 const orderLimiter = rateLimit({ windowMs: 60_000, max: 3, message: { error: 'Too many orders. Wait a minute.' } });
 
 app.post('/submit-order', orderLimiter, async (req, res) => {
@@ -317,15 +329,15 @@ app.post('/submit-order', orderLimiter, async (req, res) => {
     });
 
     // Notify admin via Telegram
-    const tgText = `🛒 <b>NEW ORDER</b>\n` +
-      `📦 Plan: <b>${plan.toUpperCase()}</b> — ${price.egp} EGP (${price.usd})\n` +
-      `👤 Name: ${user_name}\n` +
-      `📱 Phone: ${phone_number}\n` +
-      `🌍 Country: ${country || 'N/A'}\n` +
-      `📧 Email: ${email || 'N/A'}\n` +
-      `🆔 Order ID: <code>${order._id}</code>\n` +
-      `💻 HWID: <code>${hwid || 'N/A'}</code>\n` +
-      `🕐 Time: ${new Date().toUTCString()}`;
+    const tgText = `?? <b>NEW ORDER</b>\n` +
+      `?? Plan: <b>${plan.toUpperCase()}</b> � ${price.egp} EGP (${price.usd})\n` +
+      `?? Name: ${user_name}\n` +
+      `?? Phone: ${phone_number}\n` +
+      `?? Country: ${country || 'N/A'}\n` +
+      `?? Email: ${email || 'N/A'}\n` +
+      `?? Order ID: <code>${order._id}</code>\n` +
+      `?? HWID: <code>${hwid || 'N/A'}</code>\n` +
+      `?? Time: ${new Date().toUTCString()}`;
     await notifyTelegram(tgText);
 
     await logSecurity('info', `New order submitted plan=${plan}`, ip, '', hwid || '', { order_id: order._id });
@@ -341,9 +353,9 @@ app.post('/submit-order', orderLimiter, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 // ROUTE: GET /check-update?version=1.0.0
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 // Mandatory update download URL - always sent to client when is_mandatory=true
 const MANDATORY_DOWNLOAD_URL = 'https://sasa120120.itch.io/valorant-companion-app/download/eyJpZCI6NDQxODI5NCwiZXhwaXJlcyI6MTc3NDQ4NjQ1MH0%3d%2ev0Oyz%2f8pnRmQ9vOGL3uSnjoTCbU%3d';
 
@@ -384,10 +396,10 @@ app.get('/check-update', async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 // ----------------------------------------------------------------------------
-// ADMIN: GET /admin/current-version � returns current active version
-// ADMIN: POST /admin/set-version    � raise version (only forward, never backward)
+// ADMIN: GET /admin/current-version ? returns current active version
+// ADMIN: POST /admin/set-version    ? raise version (only forward, never backward)
 // ----------------------------------------------------------------------------
 app.get('/admin/current-version', requireAdminKey, async (req, res) => {
   try {
@@ -455,7 +467,7 @@ app.post('/admin/set-version', requireAdminKey, async (req, res) => {
   }
 });
 // ----------------------------------------------------------------------------
-// SERVER-SENT EVENTS (SSE) � real-time push to connected clients
+// SERVER-SENT EVENTS (SSE) ? real-time push to connected clients
 // ----------------------------------------------------------------------------
 const sseClients = new Map(); // clientId -> res
 
@@ -467,7 +479,7 @@ function broadcastVersionUpdate(payload) {
   }
 }
 
-// GET /events � SSE stream (clients connect once and stay connected)
+// GET /events ? SSE stream (clients connect once and stay connected)
 app.get('/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -479,8 +491,8 @@ app.get('/events', (req, res) => {
   res.write(': connected\n\n');
   req.on('close', () => { sseClients.delete(clientId); });
 });
-// ADMIN ROUTES — protected by x-admin-key header
-// ══════════════════════════════════════════════════════════════════════════════
+// ADMIN ROUTES � protected by x-admin-key header
+// ------------------------------------------------------------------------------
 
 // Generate a new license key
 app.post('/admin/generate-key', requireAdminKey, async (req, res) => {
@@ -497,7 +509,7 @@ app.post('/admin/generate-key', requireAdminKey, async (req, res) => {
   // FIX: key format was "VS-XXXXXXXX-XXXXXXXXXXXXXXXXXXXXXXXX" (prefix 8 chars = "VS-XXXXX")
   // but key_prefix was sliced from the raw key which starts with e.g. "VS-" (3 chars) + 5 hex chars.
   // The prefix lookup on validate uses keyPrefix() which normalizes and takes first 8 chars of the
-  // full key — this is consistent. However, the rand was 32 hex chars (16 bytes * 2) but only
+  // full key � this is consistent. However, the rand was 32 hex chars (16 bytes * 2) but only
   // slice(0,8) and slice(8) were used giving 8+24=32 chars total key body. This is correct.
   // FIX: ensure key_prefix is derived from the normalized key (uppercase, trimmed) for consistent lookups.
   const prefix = { standard: 'VS', pro: 'VP', lifetime: 'VL', admin: 'VA' }[tier];
@@ -662,8 +674,8 @@ app.get('/admin/stats', requireAdminKey, async (req, res) => {
       activeSessions,
       pendingOrders,
       totalOrders,
-      expiredKeys,    // FIX: new field — client uses for ExpiredKeyCount display
-      revokedKeys,    // FIX: new field — client uses for RevokedKeyCount display
+      expiredKeys,    // FIX: new field � client uses for ExpiredKeyCount display
+      revokedKeys,    // FIX: new field � client uses for RevokedKeyCount display
       tierBreakdown,
       recentSecurityEvents: recentLogs,
     });
@@ -673,11 +685,11 @@ app.get('/admin/stats', requireAdminKey, async (req, res) => {
 });
 
 // Health check
-// ── Pricing settings (stored in its own collection) ───────────────────────────
+// -- Pricing settings (stored in its own collection) ---------------------------
 const PricingSettings = mongoose.models.PricingSettings || mongoose.model('PricingSettings',
   new mongoose.Schema({ key: String, value: mongoose.Schema.Types.Mixed }, { strict: false }));
 
-// ── Admin: Update pricing ─────────────────────────────────────────────────────
+// -- Admin: Update pricing -----------------------------------------------------
 app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
   try {
     const { daily_egp, daily_usd, weekly_egp, weekly_usd, monthly_egp, monthly_usd } = req.body;
@@ -690,7 +702,7 @@ app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ── Admin: Get pricing (for client sync) ──────────────────────────────────────
+// -- Admin: Get pricing (for client sync) --------------------------------------
 app.get('/pricing', async (req, res) => {
   try {
     const doc = await PricingSettings.findOne({ key: 'pricing' }).lean();
@@ -699,7 +711,7 @@ app.get('/pricing', async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ── Admin: Pin/Unpin HWID ─────────────────────────────────────────────────────
+// -- Admin: Pin/Unpin HWID -----------------------------------------------------
 app.post('/admin/pin-hwid', requireAdminKey, async (req, res) => {
   try {
     const { key_id, pinned } = req.body;
@@ -709,7 +721,7 @@ app.post('/admin/pin-hwid', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ── Admin: Adjust key duration ────────────────────────────────────────────────
+// -- Admin: Adjust key duration ------------------------------------------------
 app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
   try {
     const { key_id, days } = req.body;
@@ -720,7 +732,7 @@ app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
       const base = key.expires_at > new Date() ? key.expires_at : new Date();
       key.expires_at = new Date(base.getTime() + days * 86400000);
     } else if (days < 0) {
-      // Lifetime key — set expiry to N days from now when reducing
+      // Lifetime key � set expiry to N days from now when reducing
       key.expires_at = new Date(Date.now() + Math.abs(days) * 86400000);
     }
     await key.save();
@@ -728,7 +740,7 @@ app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ── Admin: Hard delete key ─────────────────────────────────────────────────────
+// -- Admin: Hard delete key -----------------------------------------------------
 app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
   try {
     const { key_id } = req.body;
@@ -739,9 +751,9 @@ app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ROUTE: POST /complaint — User submits a complaint from the floating chat icon
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
+// ROUTE: POST /complaint � User submits a complaint from the floating chat icon
+// ------------------------------------------------------------------------------
 const { Complaint } = require('./models');
 
 const complaintLimiter = rateLimit({ windowMs: 5 * 60_000, max: 3, message: { ok: false, message: 'Too many complaints sent. Please wait 5 minutes.' } });
@@ -769,14 +781,14 @@ app.post('/complaint', complaintLimiter, async (req, res) => {
     });
 
     // Notify admin via Telegram
-    const tgText = `💬 <b>NEW COMPLAINT</b>\n` +
-      `📋 Subject: <b>${subject}</b>\n` +
-      `🏷️ Category: ${category || 'General'}\n` +
-      `💬 Message: ${message.slice(0, 200)}${message.length > 200 ? '...' : ''}\n` +
-      `💻 HWID: <code>${hwid || 'N/A'}</code>\n` +
-      `🔢 App: v${app_version || 'N/A'}\n` +
-      `🆔 ID: <code>${complaint._id}</code>\n` +
-      `🕐 Time: ${new Date().toUTCString()}`;
+    const tgText = `?? <b>NEW COMPLAINT</b>\n` +
+      `?? Subject: <b>${subject}</b>\n` +
+      `??? Category: ${category || 'General'}\n` +
+      `?? Message: ${message.slice(0, 200)}${message.length > 200 ? '...' : ''}\n` +
+      `?? HWID: <code>${hwid || 'N/A'}</code>\n` +
+      `?? App: v${app_version || 'N/A'}\n` +
+      `?? ID: <code>${complaint._id}</code>\n` +
+      `?? Time: ${new Date().toUTCString()}`;
     await notifyTelegram(tgText);
 
     return res.json({ ok: true, complaint_id: complaint._id, message: 'Complaint received! We will respond soon.' });
@@ -786,7 +798,7 @@ app.post('/complaint', complaintLimiter, async (req, res) => {
   }
 });
 
-// ── Admin: List complaints ────────────────────────────────────────────────────
+// -- Admin: List complaints ----------------------------------------------------
 app.get('/admin/complaints', requireAdminKey, async (req, res) => {
   const status = req.query.status;
   const filter = status ? { status } : {};
@@ -798,7 +810,7 @@ app.get('/admin/complaints', requireAdminKey, async (req, res) => {
   }
 });
 
-// ── Admin: Update complaint status / reply ────────────────────────────────────
+// -- Admin: Update complaint status / reply ------------------------------------
 app.post('/admin/update-complaint', requireAdminKey, async (req, res) => {
   const { complaint_id, status, admin_reply } = req.body;
   try {
@@ -813,9 +825,9 @@ app.post('/admin/update-complaint', requireAdminKey, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ROUTE: GET /my-orders?hwid=... — Returns all orders for a given HWID
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
+// ROUTE: GET /my-orders?hwid=... � Returns all orders for a given HWID
+// ------------------------------------------------------------------------------
 app.get('/my-orders', async (req, res) => {
   const { hwid } = req.query;
   if (!hwid || hwid.length < 4) {
@@ -833,7 +845,7 @@ app.get('/my-orders', async (req, res) => {
   }
 });
 
-// ── Keep-alive ping endpoint (for UptimeRobot) ────────────────────────────────
+// -- Keep-alive ping endpoint (for UptimeRobot) --------------------------------
 // UptimeRobot pings /ping every 5 minutes to prevent Replit from sleeping
 app.get('/ping', (req, res) => {
   // Version-aware ping - old clients get 503 which SplashScreen treats as "Server Offline"
@@ -851,7 +863,7 @@ app.get('/ping', (req, res) => {
   return res.json({ ok: true, ts: Date.now() });
 });
 
-// ── Self-ping (built-in keep-alive) ───────────────────────────────────────────
+// -- Self-ping (built-in keep-alive) -------------------------------------------
 // Replit sleeps after ~30min of inactivity. This self-ping runs every 4 minutes
 // as a backup so the server stays awake even if UptimeRobot hasn't been set up yet.
 // Only runs in production to avoid noise during local development.
@@ -866,7 +878,7 @@ if (process.env.NODE_ENV === 'production') {
         http.get(SELF_URL, (r) => r.resume()).on('error', () => {});
       } catch (_) {}
     }, 4 * 60 * 1000); // every 4 minutes
-    console.log(`[KEEP-ALIVE] Self-ping active → ${SELF_URL}`);
+    console.log(`[KEEP-ALIVE] Self-ping active ? ${SELF_URL}`);
   }
 }
 
@@ -874,9 +886,9 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString(), db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 // BACKGROUND JOBS
-// ══════════════════════════════════════════════════════════════════════════════
+// ------------------------------------------------------------------------------
 
 // Every 5 minutes: mark stale sessions as inactive
 cron.schedule('*/5 * * * *', async () => {
@@ -899,7 +911,7 @@ cron.schedule('0 * * * *', async () => {
   } catch {}
 });
 
-// ── Start server ──────────────────────────────────────────────────────────────
+// -- Start server --------------------------------------------------------------
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[SERVER] ValorantCompanion Backend running on port ${PORT}`);
   console.log(`[SERVER] Environment: ${process.env.NODE_ENV}`);

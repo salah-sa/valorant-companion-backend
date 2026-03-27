@@ -1,5 +1,5 @@
-ï»¿// Run this in MongoDB shell or Compass to register v1.1.7 as the latest version
-// Command: node update_version.js
+// Run: node update_version.js
+// Seeds the DB with the current minimum version — run after every version raise.
 
 require('dotenv').config({ path: './config/.env' });
 const mongoose = require('mongoose');
@@ -15,6 +15,11 @@ const AppVersionSchema = new mongoose.Schema({
 });
 const AppVersion = mongoose.model('AppVersion', AppVersionSchema);
 
+const NEW_VERSION   = '1.1.8';
+const IS_MANDATORY  = true;
+const DOWNLOAD_URL  = 'https://sasa120120.itch.io/valorant-companion-app';
+const RELEASE_NOTES = 'Version 1.1.8 — Performance improvements, icon fixes, admin version control.';
+
 async function main() {
   await mongoose.connect(process.env.MONGODB_URI);
   console.log('[DB] Connected');
@@ -23,22 +28,23 @@ async function main() {
   await AppVersion.updateMany({}, { $set: { is_active: false } });
   console.log('[DB] Old versions deactivated');
 
-  // Insert new v1.1.7
-  await AppVersion.findOneAndUpdate(
-    { version: '1.1.7' },
+  // Insert/update new version
+  const doc = await AppVersion.findOneAndUpdate(
+    { version: NEW_VERSION },
     { $set: {
-      is_active:     true,
-      is_mandatory:  true,
-      download_url:  'https://sasa120120.itch.io/valorant-companion-app/download/eyJpZCI6NDQxODI5NCwiZXhwaXJlcyI6MTc3NDQ4NjQ1MH0%3d%2ev0Oyz%2f8pnRmQ9vOGL3uSnjoTCbU%3d',
-      release_notes: 'Version 1.1.7 - Latest release with improvements and bug fixes.',
-      released_at:   new Date(),
+      is_active:      true,
+      is_mandatory:   IS_MANDATORY,
+      download_url:   DOWNLOAD_URL,
+      release_notes:  RELEASE_NOTES,
+      released_at:    new Date(),
+      checksum_sha256: '',
     }},
     { upsert: true, new: true }
   );
-  console.log('[DB] âœ… Version 1.1.7 registered as latest active version');
+  console.log('[DB] Version registered:', doc.version, '| mandatory:', doc.is_mandatory);
+  console.log('[DB] Done — /check-update will now return update_available=true for clients < v' + NEW_VERSION);
 
   await mongoose.disconnect();
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
-
