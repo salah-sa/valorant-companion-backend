@@ -425,16 +425,59 @@ app.post('/admin/set-version', requireAdminKey, async (req, res) => {
       release_notes,
       is_active: true,
       released_at: new Date(),
-      download_url: '',
+      download_url: MANDATORY_DOWNLOAD_URL,
       checksum_sha256: '',
     });
 
     console.log(`[admin/set-version] Version raised to ${version} (mandatory=${is_mandatory})`);
+
+    // Broadcast version update to ALL connected socket clients
+    const updatePayload = {
+      update_available: true,
+      latest_version:   version,
+      is_mandatory,
+      release_notes,
+      download_url:     MANDATORY_DOWNLOAD_URL,
+      update_message:   `New Update Available!\n\nVersion v${version} has been released.\n\n` +
+                        (release_notes ? release_notes + '\n\n' : '') +
+                        (is_mandatory
+                          ? 'This is a MANDATORY update. You must update to continue using VALORANT Companion.\nPress "Update" to download, or "Exit" to close the app.'
+                          : 'Press "Update" to download the latest version.'),
+    };
+    // Broadcast to all SSE-connected clients
+    broadcastVersionUpdate(updatePayload);
+    console.log(`[admin/set-version] Broadcasted version_update to ${sseClients.size} SSE clients`);
+
     return res.json({ ok: true, version, is_mandatory });
   } catch (err) {
     console.error('[admin/set-version]', err);
     return res.status(500).json({ error: 'Failed to set version.' });
   }
+});
+// ----------------------------------------------------------------------------
+// SERVER-SENT EVENTS (SSE) � real-time push to connected clients
+// ----------------------------------------------------------------------------
+const sseClients = new Map(); // clientId -> res
+
+function broadcastVersionUpdate(payload) {
+  const data = JSON.stringify(payload);
+  for (const [id, res] of sseClients) {
+    try { res.write(`event: version_update\ndata: ${data}\n\n`); }
+    catch { sseClients.delete(id); }
+  }
+}
+
+// GET /events � SSE stream (clients connect once and stay connected)
+app.get('/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+  const clientId = Date.now() + '_' + Math.random().toString(36).slice(2);
+  sseClients.set(clientId, res);
+  res.write(': connected\n\n');
+  req.on('close', () => { sseClients.delete(clientId); });
 });
 // ADMIN ROUTES — protected by x-admin-key header
 // ══════════════════════════════════════════════════════════════════════════════
