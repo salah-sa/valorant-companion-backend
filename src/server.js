@@ -67,7 +67,10 @@ async function refreshMinimumVersion() {
         console.log(`[version] MINIMUM_VERSION: ${MINIMUM_VERSION} -> ${latest.version}`);
       MINIMUM_VERSION = latest.version;
     }
-  } catch (e) { console.error('[version] refresh error:', e.message); }
+  } catch (e) { 
+    console.error('[version] DB query failed, using hardcoded fallback 1.1.9:', e.message); 
+    MINIMUM_VERSION = '1.1.9'; 
+  }
 }
 
 async function loadMaintenanceMode() {
@@ -162,7 +165,21 @@ app.get('/check-update', async (req, res) => {
   try {
     const clientVersion = (req.headers['x-app-version'] || req.query.v || '0.0.0')
       .toString().replace(/[^0-9.]/g, '');
-    const latest = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 }).lean();
+    let latest;
+    try {
+      latest = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 }).lean();
+    } catch (dbErr) {
+      console.error('[check-update] DB error, using default:', dbErr.message);
+      // Fallback to latest hardcoded version if DB is down
+      return res.json({
+        update_available: clientVersion !== MINIMUM_VERSION,
+        latest_version: MINIMUM_VERSION,
+        is_mandatory: true,
+        download_url: MANDATORY_DOWNLOAD_URL,
+        release_notes: 'Waking up backend... (DB connection pending)',
+      });
+    }
+
     if (!latest) return res.json({ update_available: false });
     const needsUpdate = compareVersions(clientVersion, latest.version) !== 0;
     return res.json({
