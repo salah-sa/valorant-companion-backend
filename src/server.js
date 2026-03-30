@@ -556,13 +556,64 @@ app.post('/complaint', async (req, res) => {
   req.body.app_version = req.headers['x-app-version'] || req.body.app_version || '';
   return res.redirect(307, '/submit-complaint');
 });
-// ===========================================================================
-// START SERVER
-// ===========================================================================
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[SERVER] ValorantCompanion Backend v2 running on port ${PORT}`);
-  console.log(`[SERVER] Environment: ${process.env.NODE_ENV}`);
-  console.log(`[SERVER] Real-time SSE: /events | Admin SSE: /admin-events`);
+
+// ---------------------------------------------------------------------------
+// Database Connection (Resilient v1.1.9)
+// ---------------------------------------------------------------------------
+async function connectDB() {
+  const mongoUri = process.env.MONGODB_URI;
+  if (!mongoUri) {
+    console.error('[DB] FATAL: MONGODB_URI is not defined in environment variables.');
+    return;
+  }
+
+  try {
+    console.log('[DB] Connecting to MongoDB...');
+    await mongoose.connect(mongoUri, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 10000,
+    });
+    console.log('[DB] Connected Successfully.');
+  } catch (err) {
+    console.error('[DB] Connection FAILED. Server will continue in Offline Fallback mode.');
+    console.error(`[DB] Error: ${err.message}`);
+  }
+}
+
+// Initial connection attempt
+connectDB();
+
+// ---------------------------------------------------------------------------
+// Global Version Sync (v1.1.9 Fallback)
+// ---------------------------------------------------------------------------
+let LATEST_VERSION  = '1.1.9';
+
+async function syncVersion() {
+  try {
+    const config = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 });
+    if (config) {
+      MINIMUM_VERSION = config.version || '1.1.9';
+      LATEST_VERSION = config.version || '1.1.9';
+      console.log(`[Server] Sync Complete. Enforcing v${MINIMUM_VERSION}`);
+    }
+  } catch (err) {
+    console.log(`[Server] Sync Failed. Using Fallback v${MINIMUM_VERSION}`);
+  }
+}
+
+// Sync periodically
+setInterval(syncVersion, 60000);
+setTimeout(syncVersion, 5000);
+
+// ---------------------------------------------------------------------------
+// START SERVER (Instant Listen to avoid 502 Bad Gateway)
+// ---------------------------------------------------------------------------
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`============================================`);
+    console.log(` VALORANT COMPANION BACKEND (v1.1.9)`);
+    console.log(` Listening on : http://0.0.0.0:${PORT}`);
+    console.log(` Environment  : Railway Production`);
+    console.log(`============================================`);
 });
 
 process.on('unhandledRejection', reason => { console.error('[UNHANDLED REJECTION]', reason); });
