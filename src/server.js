@@ -13,6 +13,31 @@ const axios     = require('axios');
 
 const { LicenseKey, Activation, Order, SecurityLog, AppVersion, Complaint, PerformanceMetric, ServerConfig } = require('./models');
 
+// ── Database Seeder (Automated for New DBs) ───────────────────────────
+async function seedDatabase() {
+    try {
+        const count = await LicenseKey.countDocuments();
+        if (count === 0) {
+            console.log('🌱 [Seeder] Database is empty. Creating default Admin...');
+            const rand = crypto.randomBytes(16).toString('hex').toUpperCase();
+            const rawKey = 'VA-' + rand.slice(0, 8) + '-' + rand.slice(8, 24);
+            const hash = await bcrypt.hash(rawKey, 10);
+            
+            await LicenseKey.create({
+                key_prefix: rawKey.slice(0, 8).toUpperCase(),
+                key_hash: hash,
+                tier: 'admin',
+                label: 'AUTO-GENERATED ADMIN',
+                expires_at: null
+            });
+            console.log('✅ [Seeder] DEFAULT ADMIN CREATED: ' + rawKey);
+            console.log('👉 [Seeder] Use this key to log into the app.');
+        }
+    } catch (err) {
+        console.error('❌ [Seeder] Failed:', err.message);
+    }
+}
+
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
@@ -95,16 +120,14 @@ async function syncVersion() {
 }
 
 async function connectDB() {
-  const mongoUri = process.env.MONGODB_URI;
-  if (!mongoUri) return console.error('[DB] MONGODB_URI missing!');
-  try {
-    console.log('[DB] Connecting...');
-    await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
-    console.log('[DB] Connected.');
-    await syncVersion();
-  } catch (err) {
-    console.error(`[DB] Error: ${err.message}`);
-  }
+  // ── Database Connection ──────────────────────────────────────────────
+  mongoose.connect(process.env.MONGODB_URI).then(async () => {
+      console.log('✅ [MongoDB] Connected and Ready');
+      await seedDatabase();
+      await syncVersion();
+  }).catch(err => {
+      console.error('❌ [MongoDB] Failed Connection:', err.message);
+  });
 }
 
 // ---------------------------------------------------------------------------
