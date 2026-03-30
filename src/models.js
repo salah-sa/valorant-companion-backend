@@ -155,4 +155,51 @@ complaintSchema.index({ resolved_at: 1 }, { expireAfterSeconds: 15552000, partia
 
 const Complaint = mongoose.model('Complaint', complaintSchema);
 
-module.exports = { LicenseKey, Activation, Order, SecurityLog, AppVersion, RateLimit, Complaint };
+// ══════════════════════════════════════════════════════════════════════════════
+// PERFORMANCE METRICS (clients send FPS, ping, CPU, RAM every 5 min)
+// ══════════════════════════════════════════════════════════════════════════════
+const performanceMetricSchema = new mongoose.Schema({
+  hwid:         { type: String, required: true, index: true },
+  fps_avg:      { type: Number, default: 0 },
+  fps_min:      { type: Number, default: 0 },
+  fps_max:      { type: Number, default: 0 },
+  ping_avg:     { type: Number, default: 0 },
+  cpu_avg:      { type: Number, default: 0 },
+  ram_avg:      { type: Number, default: 0 },
+  app_version:  { type: String, default: '' },
+  map_name:     { type: String, default: '' },
+  agent_name:   { type: String, default: '' },
+  recorded_at:  { type: Date, default: Date.now, index: true },
+}, { versionKey: false });
+
+// TTL: auto-delete records older than 30 days
+performanceMetricSchema.index({ recorded_at: 1 }, { expireAfterSeconds: 2592000 });
+performanceMetricSchema.index({ hwid: 1, recorded_at: -1 });
+
+const PerformanceMetric = mongoose.model('PerformanceMetric', performanceMetricSchema);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SERVER CONFIG (key-value store for server settings)
+// ══════════════════════════════════════════════════════════════════════════════
+const serverConfigSchema = new mongoose.Schema({
+  key:         { type: String, required: true, unique: true, index: true },
+  value:       { type: mongoose.Schema.Types.Mixed, default: null },
+  updated_at:  { type: Date, default: Date.now },
+}, { versionKey: false });
+
+const ServerConfig = mongoose.model('ServerConfig', serverConfigSchema);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EXPORTS
+// ══════════════════════════════════════════════════════════════════════════════
+module.exports = { 
+  LicenseKey, 
+  Activation, 
+  Order, 
+  SecurityLog, 
+  AppVersion, 
+  RateLimit, 
+  Complaint,
+  PerformanceMetric,
+  ServerConfig
+};
