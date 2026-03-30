@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 require('dotenv').config({ path: require('path').join(__dirname, '../config/.env') });
 
 const express   = require('express');
@@ -49,6 +49,13 @@ function broadcastToAdmin(eventName, payload) {
 function broadcastVersionUpdate(payload) {
   broadcastToAll('version_update', payload);
 }
+
+
+
+
+
+
+
 
 // ---------------------------------------------------------------------------
 // Version gate & Maintenance mode
