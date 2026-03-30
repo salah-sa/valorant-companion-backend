@@ -90,7 +90,7 @@ async function loadMaintenanceMode() {
   } catch (e) { console.error('[config] maintenance_mode load error:', e.message); }
 }
 
-const VERSION_EXEMPT = ['/check-update', '/health', '/pricing', '/ping', '/events', '/admin-events', 
+const VERSION_EXEMPT = ['/check-update', '/health', '/pricing', '/events', '/admin-events', 
   '/crash-report', '/admin'];
 
 app.use((req, res, next) => {
