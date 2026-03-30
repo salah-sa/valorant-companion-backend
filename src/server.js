@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 require('dotenv').config({ path: require('path').join(__dirname, '../config/.env') });
 
 const express   = require('express');
@@ -66,7 +66,7 @@ function broadcastVersionUpdate(payload) {
 // ---------------------------------------------------------------------------
 // Version gate & Maintenance mode
 // ---------------------------------------------------------------------------
-let MINIMUM_VERSION = '1.1.8';
+let MINIMUM_VERSION = '1.1.9';
 let MAINTENANCE_MODE = false;
 
 const MANDATORY_DOWNLOAD_URL = process.env.DOWNLOAD_URL ||
