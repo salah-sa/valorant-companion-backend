@@ -20,9 +20,17 @@ const PORT = process.env.PORT || 3000;
 // Security middleware
 // ---------------------------------------------------------------------------
 app.use(helmet());
-app.use(cors({ origin: false }));
+app.use(cors()); // Allow all origins for Desktop Client
 app.use(express.json({ limit: '16kb' }));
 app.set('trust proxy', 1);
+
+// Debug Log for Handshakes
+app.use((req, res, next) => {
+  if (req.path === '/health' || req.path === '/ping') {
+    console.log(`[Handshake] ${req.method} ${req.path} from ${req.ip} (Version: ${req.headers['x-app-version']})`);
+  }
+  next();
+});
 
 // ---------------------------------------------------------------------------
 // SSE Client Registry  (real-time push to all connected desktop clients)
