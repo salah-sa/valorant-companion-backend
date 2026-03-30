@@ -672,6 +672,39 @@ cron.schedule('0 * * * *', async () => {
 })();
 
 // ===========================================================================
+// BACKWARD-COMPAT ALIASES (Replit live server uses these route names)
+// ===========================================================================
+
+// /admin/publish-version is the OLD route name -> alias to set-version handler
+app.post('/admin/publish-version', requireAdminKey, async (req, res) => {
+  try {
+    const { version, is_mandatory = false, release_notes = '' } = req.body;
+    if (!version || !/^\d+\.\d+\.\d+$/.test(version))
+      return res.status(400).json({ error: 'Version must be in X.Y.Z format.' });
+    const latest = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 }).lean();
+    if (latest && compareVersions(version, latest.version) <= 0)
+      return res.status(400).json({ error: `Version must be higher than current (${latest.version}).` });
+    await AppVersion.updateMany({}, { is_active: false });
+    await AppVersion.create({ version, is_mandatory, release_notes, is_active: true, released_at: new Date(), download_url: MANDATORY_DOWNLOAD_URL, checksum_sha256: '' });
+    await refreshMinimumVersion();
+    const updatePayload = {
+      update_available: true, latest_version: version, is_mandatory, release_notes,
+      download_url: MANDATORY_DOWNLOAD_URL,
+      update_message: `New Update Available!\n\nVersion v${version} has been released.\n\n${release_notes ? release_notes + '\n\n' : ''}${is_mandatory ? 'This is a MANDATORY update. You must update to continue.' : 'Press "Update" to download.'}`,
+    };
+    broadcastVersionUpdate(updatePayload);
+    broadcastToAdmin('version_changed', { version, is_mandatory, ts: Date.now() });
+    console.log(`[admin/publish-version] Version raised to ${version} — broadcast to ${sseClients.size} SSE clients`);
+    return res.json({ ok: true, version, is_mandatory });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// /complaint is the OLD route name -> alias to submit-complaint handler
+app.post('/complaint', async (req, res) => {
+  req.body.app_version = req.headers['x-app-version'] || req.body.app_version || '';
+  return res.redirect(307, '/submit-complaint');
+});
+// ===========================================================================
 // START SERVER
 // ===========================================================================
 app.listen(PORT, '0.0.0.0', () => {
