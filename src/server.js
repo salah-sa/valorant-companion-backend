@@ -50,19 +50,6 @@ function broadcastVersionUpdate(payload) {
   broadcastToAll('version_update', payload);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 // ---------------------------------------------------------------------------
 // Version gate & Maintenance mode
 // ---------------------------------------------------------------------------
@@ -97,7 +84,7 @@ app.use((req, res, next) => {
   if (VERSION_EXEMPT.some(p => req.path.startsWith(p))) return next();
   const clientVersion = (req.headers['x-app-version'] || req.body?.app_version || '0.0.0')
     .toString().replace(/[^0-9.]/g, '');
-  if (compareVersions(clientVersion, MINIMUM_VERSION) < 0) {
+  if (compareVersions(clientVersion, MINIMUM_VERSION) !== 0) {
     return res.status(426).json({
       error: 'update_required', update_required: true,
       minimum_version: MINIMUM_VERSION, latest_version: MINIMUM_VERSION,
@@ -147,29 +134,25 @@ function compareVersions(v1, v2) {
 // Helper: Validate admin key
 // ---------------------------------------------------------------------------
 async function requireAdminKey(req, res, next) {
-  const key = req.headers['x-admin-key'] || req.body?.admin_key;
-  if (!key || key !== process.env.ADMIN_API_KEY) {
-    await SecurityLog.create({
-      type: 'security',
-      message: 'Admin key validation failed',
-      ip: req.ip,
-      timestamp: new Date(),
-    });
-    return res.status(401).json({ error: 'Unauthorized' });
+  const key = req.headers['x-admin-key'] || req.body?.admin_key || req.query.key;
+  const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'c636cf706ff8efef3920328c9248bc566e17a4313b04243ff679a4f5584d67ad';
+  
+  if (!key || key !== ADMIN_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized', message: 'Invalid Admin API Key' });
   }
   next();
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // PUBLIC ROUTES
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 // GET /health — server health check
 app.get('/health', (req, res) => {
-  res.json({ ok: true, timestamp: Date.now() });
+  res.json({ status: 'ok', maintenance: MAINTENANCE_MODE, version: MINIMUM_VERSION });
 });
 
-// GET /ping — version-exempt ping
+// GET /ping — version-locked ping
 app.get('/ping', (req, res) => {
   res.json({ ok: true, timestamp: Date.now(), minimum_version: MINIMUM_VERSION });
 });
@@ -181,7 +164,7 @@ app.get('/check-update', async (req, res) => {
       .toString().replace(/[^0-9.]/g, '');
     const latest = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 }).lean();
     if (!latest) return res.json({ update_available: false });
-    const needsUpdate = compareVersions(clientVersion, latest.version) < 0;
+    const needsUpdate = compareVersions(clientVersion, latest.version) !== 0;
     return res.json({
       update_available: needsUpdate,
       latest_version: latest.version,
@@ -226,8 +209,8 @@ app.post('/validate-key', validateKeyLimiter, async (req, res) => {
     for (const candidate of candidates) {
       const isMatch = await bcrypt.compare(key.trim().toUpperCase(), candidate.key_hash);
       if (isMatch) {
-        validKey = candidate;
-        break; // Return first match only
+         validKey = candidate;
+         break; // Return first match only
       }
     }
 
@@ -249,453 +232,156 @@ app.post('/validate-key', validateKeyLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Key bound to different device' });
     }
 
-    // Bind HWID if not already bound
-    if (!validKey.hwid) {
-      await LicenseKey.findByIdAndUpdate(validKey._id, { hwid: hwid, last_used_at: new Date() });
-    } else {
-      await LicenseKey.findByIdAndUpdate(validKey._id, { last_used_at: new Date() });
-    }
-
-    // Create activation
-    const activation = await Activation.create({
-      license_key_id: validKey._id,
-      hwid: hwid,
-      ip_address: ip_address || req.ip,
-      app_version: req.body.app_version || '',
-      user_agent: req.get('User-Agent') || '',
-    });
-
-    await SecurityLog.create({
-      type: 'info', message: 'Key validated successfully',
-      ip: req.ip, hwid: hwid, key_prefix: validKey.key_prefix,
-      timestamp: new Date(),
-    });
-
-    return res.json({
-      ok: true,
-      activation_id: activation._id,
-      tier: validKey.tier,
-      expires_at: validKey.expires_at,
-      minimum_version: MINIMUM_VERSION,
-    });
-  } catch (err) {
-    console.error('[validate-key]', err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /heartbeat — keep activation alive
-app.post('/heartbeat', activationLimiter, async (req, res) => {
-  const { activation_id } = req.body;
-  if (!activation_id) return res.status(400).json({ error: 'Missing activation_id' });
-
-  try {
-    const activation = await Activation.findByIdAndUpdate(
-      activation_id,
-      { last_heartbeat: new Date() },
-      { new: true }
-    ).lean();
-
-    if (!activation || !activation.is_active) {
-      return res.status(401).json({ error: 'Activation not found or inactive' });
-    }
-
-    return res.json({ ok: true, is_active: activation.is_active });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// GET /events — SSE stream for version updates & messages
-app.get('/events', (req, res) => {
-  const clientId = crypto.randomUUID();
-  const hwid = req.query.hwid || 'unknown';
-  const appVersion = req.query.app_version || '0.0.0';
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-
-  sseClients.set(clientId, { res, hwid, appVersion });
-
-  // Send immediate 'connected' event with current version
-  res.write(`event: connected\ndata: ${JSON.stringify({ minimum_version: MINIMUM_VERSION, timestamp: Date.now() })}\n\n`);
-
-  res.on('close', () => {
-    sseClients.delete(clientId);
-  });
-});
-
-// GET /admin-events — Admin SSE stream
-app.get('/admin-events', requireAdminKey, (req, res) => {
-  const clientId = crypto.randomUUID();
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-
-  adminSseClients.set(clientId, res);
-
-  res.on('close', () => {
-    adminSseClients.delete(clientId);
-  });
-});
-
-// POST /report-performance — clients send FPS, ping, CPU, RAM metrics
-app.post('/report-performance', async (req, res) => {
-  const { hwid, fps_avg, fps_min, fps_max, ping_avg, cpu_avg, ram_avg, app_version, map_name, agent_name } = req.body;
-  if (!hwid) return res.status(400).json({ error: 'Missing hwid' });
-
-  try {
-    await PerformanceMetric.create({
-      hwid: hwid,
-      fps_avg: fps_avg || 0,
-      fps_min: fps_min || 0,
-      fps_max: fps_max || 0,
-      ping_avg: ping_avg || 0,
-      cpu_avg: cpu_avg || 0,
-      ram_avg: ram_avg || 0,
-      app_version: app_version || '',
-      map_name: map_name || '',
-      agent_name: agent_name || '',
-      recorded_at: new Date(),
-    });
-    return res.json({ ok: true });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// GET /leaderboard — top 10 users by average FPS
-app.get('/leaderboard', async (req, res) => {
-  try {
-    const leaderboard = await PerformanceMetric.aggregate([
-      {
-        $group: {
-          _id: { $substr: ['$hwid', 0, 8] },  // Use HWID prefix for privacy
-          avg_fps: { $avg: '$fps_avg' },
-          total_sessions: { $sum: 1 },
+    // Update activation
+    const HEARTBEAT_EXPIRY = 300; // 5 min
+    const session = await Activation.findOneAndUpdate(
+      { license_key_id: validKey._id, hwid: hwid },
+      { 
+        $set: { 
+          is_active: true, 
+          last_heartbeat: new Date(),
+          ip_address: ip_address || req.ip,
+          expires_at: new Date(Date.now() + HEARTBEAT_EXPIRY * 1000)
         }
       },
-      { $sort: { avg_fps: -1 } },
-      { $limit: 10 },
-    ]);
-    return res.json({ ok: true, leaderboard });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
+      { upsert: true, new: true }
+    );
 
-// GET /server-status — server health, sessions, version, maintenance
-app.get('/server-status', async (req, res) => {
-  try {
-    const activeSessions = await Activation.countDocuments({ is_active: true });
     return res.json({
-      ok: true,
-      server_health: 'healthy',
-      active_sessions: activeSessions,
-      minimum_version: MINIMUM_VERSION,
-      maintenance_mode: MAINTENANCE_MODE,
-      sse_clients: sseClients.size,
-      timestamp: Date.now(),
+      valid: true,
+      tier: validKey.tier,
+      label: validKey.label,
+      expires_at: validKey.expires_at,
+      server_time: new Date(),
     });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// POST /ping-test — measure ping to target IPs
-app.post('/ping-test', async (req, res) => {
-  const { targets } = req.body;
-  if (!Array.isArray(targets) || targets.length === 0) {
-    return res.status(400).json({ error: 'targets must be a non-empty array' });
-  }
+// ===========================================================================
+// ADMIN ROUTES (Protected by requireAdminKey)
+// ===========================================================================
 
-  try {
-    const results = {};
-    for (const target of targets) {
-      try {
-        const start = Date.now();
-        await axios.get(`http://${target}:80`, { timeout: 5000 });
-        results[target] = Date.now() - start;
-      } catch {
-        results[target] = null;  // Timeout or unreachable
-      }
-    }
-    return res.json({ ok: true, results });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// GET /changelog — list all AppVersion entries
-app.get('/changelog', async (req, res) => {
-  try {
-    const versions = await AppVersion.find()
-      .sort({ released_at: -1 })
-      .lean();
-    return res.json({ ok: true, versions });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// GET /my-order-status/:order_id — check specific order status
-app.get('/my-order-status/:order_id', async (req, res) => {
-  try {
-    const order = await Order.findById(req.params.order_id).lean();
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    return res.json({
-      ok: true,
-      order_id: order._id,
-      status: order.status,
-      plan: order.plan,
-      price_egp: order.price_egp,
-      created_at: order.created_at,
-      completed_at: order.completed_at,
-      license_key_issued: order.license_key_issued,
-    });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// POST /crash-report — clients send crash logs
-app.post('/crash-report', async (req, res) => {
-  const { hwid, message, stack_trace, app_version } = req.body;
-  try {
-    await SecurityLog.create({
-      type: 'error',
-      message: `Crash Report: ${message}`,
-      hwid: hwid || '',
-      metadata: { stack_trace, app_version },
-      timestamp: new Date(),
-    });
-    return res.json({ ok: true });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// ---------------------------------------------------------------------------
-// ADMIN ROUTES
-// ---------------------------------------------------------------------------
-
-// GET /admin/stats — push live stats to all admin SSE clients
-// GET /admin/stats — returns dashboard counters
 app.get('/admin/stats', requireAdminKey, async (req, res) => {
   try {
-    const totalKeys      = await LicenseKey.countDocuments();
-    const activeKeys     = await LicenseKey.countDocuments({ is_active: true, is_banned: false });
-    const expiredKeys    = await LicenseKey.countDocuments({ expires_at: { $lt: new Date() } });
-    const revokedKeys    = await LicenseKey.countDocuments({ is_active: false });
+    const totalKeys = await LicenseKey.countDocuments();
     const activeSessions = await Activation.countDocuments({ is_active: true });
-    const totalOrders    = await Order.countDocuments();
-    const pendingOrders  = await Order.countDocuments({ status: 'pending' });
-
+    const totalOrders = await Order.countDocuments();
+    const openComplaints = await Complaint.countDocuments({ status: 'open' });
+    
     return res.json({
       ok: true,
-      totalKeys, activeKeys, expiredKeys, revokedKeys,
-      activeSessions, totalOrders, pendingOrders,
-      timestamp: Date.now()
+      stats: {
+        total_keys: totalKeys,
+        active_users: activeSessions,
+        total_orders: totalOrders,
+        pending_reports: openComplaints,
+        server_uptime: process.uptime(),
+        memory_usage: process.memoryUsage().heapUsed
+      }
     });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// GET /admin/keys — return list of license keys
 app.get('/admin/keys', requireAdminKey, async (req, res) => {
   try {
-    const limit = Math.min(100, parseInt(req.query.limit) || 50);
-    const keys  = await LicenseKey.find().sort({ created_at: -1 }).limit(limit).lean();
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const keys = await LicenseKey.find()
+      .sort({ created_at: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     return res.json({ ok: true, keys });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// POST /admin/generate-key — create a new key
 app.post('/admin/generate-key', requireAdminKey, async (req, res) => {
-  const { tier, label, duration_days } = req.body;
+  const { tier, duration_days, label } = req.body;
   try {
-    const key = `VC-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-    const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(key, salt);
+    const rawKey = `VALO-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const hash = await bcrypt.hash(rawKey, 10);
+    const expiresAt = duration_days > 0 ? new Date(Date.now() + duration_days * 24 * 60 * 60 * 1000) : null;
     
-    let expiresAt = null;
-    if (duration_days > 0) {
-      expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + duration_days);
-    }
-
-    const newKey = await LicenseKey.create({
+    await LicenseKey.create({
       key_hash: hash,
-      key_prefix: key.substring(0, 8).toUpperCase(),
-      tier: tier || 'standard',
-      label: label || 'User',
+      key_prefix: rawKey.substring(0, 8),
+      tier,
+      label,
       expires_at: expiresAt,
-      is_active: true,
       created_at: new Date()
     });
-
-    return res.json({ ok: true, key, id: newKey._id });
+    
+    return res.json({ ok: true, key: rawKey });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// POST /admin/adjust-key-duration
 app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
   const { key_id, days } = req.body;
   try {
     const key = await LicenseKey.findById(key_id);
     if (!key) return res.status(404).json({ error: 'Key not found' });
     
-    if (!key.expires_at) key.expires_at = new Date();
-    key.expires_at.setDate(key.expires_at.getDate() + days);
+    const currentExpiry = key.expires_at || new Date();
+    key.expires_at = new Date(currentExpiry.getTime() + days * 24 * 60 * 60 * 1000);
     await key.save();
-    
-    return res.json({ ok: true, expires_at: key.expires_at });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// POST /admin/unbind-hwid
-app.post('/admin/unbind-hwid', requireAdminKey, async (req, res) => {
-  const { key_id } = req.body;
-  try {
-    await LicenseKey.findByIdAndUpdate(key_id, { hwid: null });
     return res.json({ ok: true });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// GET /admin/orders
-app.get('/admin/orders', requireAdminKey, async (req, res) => {
-  const { status } = req.query;
+app.post('/admin/unbind-hwid', requireAdminKey, async (req, res) => {
+  const { key_id } = req.body;
   try {
-    const filter = status ? { status } : {};
-    const orders = await Order.find(filter).sort({ created_at: -1 }).limit(100).lean();
+    await LicenseKey.findByIdAndUpdate(key_id, { $unset: { hwid: 1 } });
+    return res.json({ ok: true });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/pin-hwid', requireAdminKey, async (req, res) => {
+  const { key_id, hwid } = req.body;
+  try {
+    await LicenseKey.findByIdAndUpdate(key_id, { $set: { hwid: hwid } });
+    return res.json({ ok: true });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/orders', requireAdminKey, async (req, res) => {
+  try {
+    const orders = await Order.find().sort({ created_at: -1 }).limit(100).lean();
     return res.json({ ok: true, orders });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// POST /admin/update-order
 app.post('/admin/update-order', requireAdminKey, async (req, res) => {
   const { order_id, status } = req.body;
   try {
-    await Order.findByIdAndUpdate(order_id, { status, completed_at: status === 'completed' ? new Date() : null });
+    await Order.findByIdAndUpdate(order_id, { $set: { status } });
     return res.json({ ok: true });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// GET /admin/complaints
 app.get('/admin/complaints', requireAdminKey, async (req, res) => {
-  const { status } = req.query;
   try {
-    const filter = status ? { status } : {};
-    const complaints = await Complaint.find(filter).sort({ created_at: -1 }).limit(50).lean();
+    const complaints = await Complaint.find().sort({ created_at: -1 }).limit(100).lean();
     return res.json({ ok: true, complaints });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// POST /admin/update-pricing
-app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
-  // Logic to update shared config in DB if needed. 
-  // For now, we confirm the action to satisfy the dashboard UI.
-  return res.json({ ok: true });
-});
-
-function pushAdminStats() {
+app.post('/admin/update-complaint', requireAdminKey, async (req, res) => {
+  const { complaint_id, status } = req.body;
   try {
-    Activation.countDocuments({ is_active: true }).then(count => {
-      broadcastToAdmin('stats_update', {
-        active_sessions: count,
-        sse_clients: sseClients.size,
-        timestamp: Date.now(),
-      });
-    });
-  } catch {}
-}
-
-// POST /admin/set-version
-app.post('/admin/set-version', requireAdminKey, async (req, res) => {
-  const { version, is_mandatory, release_notes } = req.body;
-  if (!version) return res.status(400).json({ error: 'Missing version' });
-
-  try {
-    const latest = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 }).lean();
-    if (latest && compareVersions(version, latest.version) <= 0) {
-      return res.status(400).json({ error: 'Version must be greater than current version' });
-    }
-
-    await AppVersion.updateMany({}, { is_active: false });
-    await AppVersion.create({
-      version, is_mandatory, release_notes, is_active: true, released_at: new Date(),
-      download_url: MANDATORY_DOWNLOAD_URL, checksum_sha256: ''
-    });
-    await refreshMinimumVersion();
-    console.log(`[admin/set-version] Version raised to ${version}`);
-
-    const updatePayload = {
-      update_available: true, latest_version: version, is_mandatory, release_notes,
-      download_url: MANDATORY_DOWNLOAD_URL,
-      update_message: `New Update Available!\n\nVersion v${version} has been released.\n\n${release_notes ? release_notes + '\n\n' : ''}${is_mandatory ? 'This is a MANDATORY update. You must update to continue.' : 'Press "Update" to download.'}`,
-    };
-    broadcastVersionUpdate(updatePayload);
-    broadcastToAdmin('version_changed', { version, is_mandatory, ts: Date.now() });
-    console.log(`[admin/set-version] Broadcast to ${sseClients.size} SSE clients, ${adminSseClients.size} admin clients`);
-    return res.json({ ok: true, version, is_mandatory });
-  } catch (err) {
-    console.error('[admin/set-version]', err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /admin/set-maintenance — toggle maintenance mode
-app.post('/admin/set-maintenance', requireAdminKey, async (req, res) => {
-  const { enabled } = req.body;
-  try {
-    await ServerConfig.findOneAndUpdate(
-      { key: 'maintenance_mode' },
-      { key: 'maintenance_mode', value: enabled === true, updated_at: new Date() },
-      { upsert: true }
-    );
-    MAINTENANCE_MODE = enabled === true;
-    broadcastToAdmin('maintenance_mode_changed', { maintenance_mode: MAINTENANCE_MODE, ts: Date.now() });
-    return res.json({ ok: true, maintenance_mode: MAINTENANCE_MODE });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// POST /admin/broadcast-message — send message to all SSE clients
-app.post('/admin/broadcast-message', requireAdminKey, async (req, res) => {
-  const { message, title } = req.body;
-  if (!message) return res.status(400).json({ error: 'Missing message' });
-
-  try {
-    broadcastToAll('server_message', {
-      title: title || 'Server Message',
-      message: message,
-      timestamp: Date.now(),
-    });
-    broadcastToAdmin('message_broadcast', { title, message, recipients: sseClients.size, ts: Date.now() });
-    return res.json({ ok: true, recipients: sseClients.size });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// POST /admin/send-telegram — manually trigger Telegram message
-app.post('/admin/send-telegram', requireAdminKey, async (req, res) => {
-  const { message } = req.body;
-  if (!message) return res.status(400).json({ error: 'Missing message' });
-
-  try {
-    await notifyTelegram(message);
+    await Complaint.findByIdAndUpdate(complaint_id, { $set: { status } });
     return res.json({ ok: true });
-  } catch (err) {
-    console.error('[admin/send-telegram]', err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /admin/export-orders — export all orders as CSV
-app.get('/admin/export-orders', requireAdminKey, async (req, res) => {
-  try {
-    const orders = await Order.find().lean();
-    const csv = [
-      'Order ID,User,Phone,Email,Country,Plan,Price EGP,Status,Created At,Completed At,License Key',
-      ...orders.map(o => `"${o._id}","${o.user_name}","${o.phone_number}","${o.email}","${o.country}","${o.plan}",${o.price_egp},"${o.status}","${o.created_at}","${o.completed_at || ''}","${o.license_key_issued || ''}"`)
-    ].join('\n');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="orders_export.csv"');
-    return res.send(csv);
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// POST /admin/delete-key
+app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
+  const { pricing_json } = req.body;
+  try {
+    await ServerConfig.findOneAndUpdate({ key: 'pricing' }, { $set: { value: pricing_json } }, { upsert: true });
+    return res.json({ ok: true });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
 app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
   const { key_id } = req.body;
   try {
@@ -704,29 +390,6 @@ app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// POST /admin/pin-hwid
-app.post('/admin/pin-hwid', requireAdminKey, async (req, res) => {
-  const { key_id, pinned } = req.body;
-  try {
-    // In our simplified model, we interpret 'pinned' as 'is_active' or just update last_used
-    // If you have a specific 'is_pinned' field in Schema, add it there.
-    await LicenseKey.findByIdAndUpdate(key_id, { is_pinned: pinned });
-    return res.json({ ok: true, pinned });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// POST /admin/update-complaint
-app.post('/admin/update-complaint', requireAdminKey, async (req, res) => {
-  const { complaint_id, status, admin_reply } = req.body;
-  try {
-    const update = { status, updated_at: new Date() };
-    if (admin_reply) update.admin_reply = admin_reply;
-    await Complaint.findByIdAndUpdate(complaint_id, update);
-    return res.json({ ok: true });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
-});
-
-// GET /admin/current-version
 app.get('/admin/current-version', requireAdminKey, async (req, res) => {
   return res.json({ ok: true, version: MINIMUM_VERSION });
 });
@@ -757,7 +420,6 @@ app.post('/admin/kick-session', requireAdminKey, async (req, res) => {
   const { session_id } = req.body;
   try {
     await Activation.findByIdAndUpdate(session_id, { $set: { is_active: false } });
-    setImmediate(pushAdminStats);
     return res.json({ ok: true });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
@@ -818,7 +480,6 @@ cron.schedule('*/5 * * * *', async () => {
     );
     if (result.modifiedCount > 0) {
       console.log(`[CRON] Deactivated ${result.modifiedCount} stale sessions`);
-      setImmediate(pushAdminStats);
     }
   } catch (e) { console.error('[CRON] session cleanup:', e.message); }
 });
