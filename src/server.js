@@ -182,11 +182,13 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// SERVER START (Instant)
+// SERVER START (Instant & Direct for Railway)
 // ---------------------------------------------------------------------------
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
     console.log(`============================================`);
     console.log(` VALORANT COMPANION BACKEND (v1.1.9)`);
-    console.log(` Listening on : http://0.0.0.0:${PORT}`);
+    console.log(` Listening on PORT: ${PORT}`);
+    console.log(` Environment : Railway Production`);
+    console.log(` Status      : Root /health & / OK`);
     console.log(`============================================`);
 });
