@@ -50,12 +50,12 @@ app.use(express.json({ limit: '16kb' }));
 app.set('trust proxy', 1);
 
 // ── Welcome Message Injection (Global) ──
-const WELCOME_MESSAGE = "Welcome to VC! Developed by Egyptian developer ENG Salah Mohamed.";
+let GLOBAL_WELCOME_MESSAGE = "Welcome to VC! Developed by Egyptian developer ENG Salah Mohamed.";
 app.use((req, res, next) => {
   const originalJson = res.json.bind(res);
   res.json = (body) => {
     if (body && typeof body === 'object' && !Array.isArray(body)) {
-      body.welcome_message = WELCOME_MESSAGE;
+      body.welcome_message = GLOBAL_WELCOME_MESSAGE;
     }
     return originalJson(body);
   };
@@ -125,6 +125,9 @@ async function syncVersion() {
       LATEST_VERSION = config.version;
       console.log(`[Server] Version Sync: v${MINIMUM_VERSION}`);
     }
+    
+    const welcome = await ServerConfig.findOne({ key: 'welcome_message' });
+    if (welcome) GLOBAL_WELCOME_MESSAGE = welcome.value;
     
     const maint = await ServerConfig.findOne({ key: 'maintenance_mode' });
     MAINTENANCE_MODE = maint ? maint.value === true : false;
