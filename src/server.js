@@ -49,6 +49,20 @@ app.use(cors()); // Allow all origins for Desktop Client
 app.use(express.json({ limit: '16kb' }));
 app.set('trust proxy', 1);
 
+// ── Welcome Message Injection (Global) ──
+const WELCOME_MESSAGE = "Welcome to VC! Developed by Egyptian developer ENG Salah Mohamed.";
+app.use((req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      body.welcome_message = WELCOME_MESSAGE;
+    }
+    return originalJson(body);
+  };
+  next();
+});
+
+
 // Debug Log for Handshakes (Diagnostic Mode)
 app.use((req, res, next) => {
   if (req.path === '/health' || req.path === '/ping') {
@@ -60,8 +74,8 @@ app.use((req, res, next) => {
 // ---------------------------------------------------------------------------
 // Global State & Versioning
 // ---------------------------------------------------------------------------
-let MINIMUM_VERSION = '1.1.9';
-let LATEST_VERSION  = '1.1.9';
+let MINIMUM_VERSION = '1.1.11';
+let LATEST_VERSION  = '1.1.11';
 let MAINTENANCE_MODE = false;
 const MANDATORY_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://sasa120120.itch.io/valorant-companion-app';
 
@@ -449,7 +463,7 @@ cron.schedule('*/5 * * * *', async () => {
 // ---------------------------------------------------------------------------
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`============================================`);
-    console.log(` VALORANT COMPANION BACKEND (v1.1.9)`);
+    console.log(` VALORANT COMPANION BACKEND (v1.1.11)`);
     console.log(` Listening on : http://0.0.0.0:${PORT}`);
     console.log(` Environment  : Railway Production`);
     console.log(` Status       : Root /health & / OK`);
