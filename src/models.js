@@ -89,7 +89,7 @@ const securityLogSchema = new mongoose.Schema({
   ip:        { type: String, default: '' },
   hwid:      { type: String, default: '' },
   key_prefix:{ type: String, default: '' },
-  timestamp: { type: Date, default: Date.now, index: true },
+  timestamp: { type: Date, default: Date.now },
   metadata:  { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { versionKey: false });
 
@@ -169,7 +169,7 @@ const performanceMetricSchema = new mongoose.Schema({
   app_version:  { type: String, default: '' },
   map_name:     { type: String, default: '' },
   agent_name:   { type: String, default: '' },
-  recorded_at:  { type: Date, default: Date.now, index: true },
+  recorded_at:  { type: Date, default: Date.now },
 }, { versionKey: false });
 
 // TTL: auto-delete records older than 30 days
