@@ -222,8 +222,44 @@ app.get('/pricing', async (req, res) => {
 
 app.post('/submit-order', async (req, res) => {
   try {
+    const { plan } = req.body;
+    
+    // Default pricing if not in DB
+    let pricing = {
+      daily_egp: "50", daily_usd: "5",
+      weekly_egp: "250", weekly_usd: "15",
+      monthly_egp: "800", monthly_usd: "40"
+    };
+
+    const config = await ServerConfig.findOne({ key: 'pricing' });
+    if (config) pricing = config.value;
+
+    let priceEgp = 0;
+    let priceUsd = "";
+
+    switch(plan) {
+      case 'daily':
+        priceEgp = parseInt(pricing.daily_egp);
+        priceUsd = pricing.daily_usd;
+        break;
+      case 'weekly':
+        priceEgp = parseInt(pricing.weekly_egp);
+        priceUsd = pricing.weekly_usd;
+        break;
+      case 'monthly':
+        priceEgp = parseInt(pricing.monthly_egp);
+        priceUsd = pricing.monthly_usd;
+        break;
+      default:
+        priceEgp = parseInt(pricing.daily_egp);
+        priceUsd = pricing.daily_usd;
+        break;
+    }
+
     const order = await Order.create({
       ...req.body,
+      price_egp: priceEgp,
+      price_usd: priceUsd,
       ip_address: req.ip,
       created_at: new Date()
     });
