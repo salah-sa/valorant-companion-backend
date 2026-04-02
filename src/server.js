@@ -74,8 +74,8 @@ app.use((req, res, next) => {
 // ---------------------------------------------------------------------------
 // Global State & Versioning
 // ---------------------------------------------------------------------------
-let MINIMUM_VERSION = '1.1.11';
-let LATEST_VERSION  = '1.1.11';
+let MINIMUM_VERSION = '1.1.12';
+let LATEST_VERSION  = '1.1.12';
 let MAINTENANCE_MODE = false;
 const MANDATORY_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://sasa120120.itch.io/valorant-companion-app';
 
