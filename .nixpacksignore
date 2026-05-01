@@ -1,0 +1,5 @@
+update_version.js
+generate_admin_key.js
+config/
+tmp/
+*.md
