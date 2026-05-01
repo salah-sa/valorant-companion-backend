@@ -1,4 +1,7 @@
 'use strict';
+// ── ValorantCompanion Backend — Production Server v1.1.12 ───────────────────
+// Refactored: modular routes, timing-safe auth, input validation, error handling
+
 require('dotenv').config({ path: require('path').join(__dirname, '../config/.env') });
 
 const express   = require('express');
@@ -9,502 +12,237 @@ const rateLimit = require('express-rate-limit');
 const crypto    = require('crypto');
 const cron      = require('node-cron');
 const bcrypt    = require('bcryptjs');
-const axios     = require('axios');
 
-const { LicenseKey, Activation, Order, SecurityLog, AppVersion, Complaint, PerformanceMetric, ServerConfig } = require('./models');
+const { LicenseKey, Activation, AppVersion, ServerConfig } = require('./models');
+const { createVersionGate } = require('./middleware/versionGate');
+const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
+const clientRoutes = require('./routes/client');
+const adminRoutes  = require('./routes/admin');
 
-// ── Database Seeder (Automated for New DBs) ───────────────────────────
-async function seedDatabase() {
-    try {
-        const count = await LicenseKey.countDocuments();
-        if (count === 0) {
-            console.log('🌱 [Seeder] Database is empty. Creating default Admin...');
-            const rand = crypto.randomBytes(16).toString('hex').toUpperCase();
-            const rawKey = 'VA-' + rand.slice(0, 8) + '-' + rand.slice(8, 24);
-            const hash = await bcrypt.hash(rawKey, 10);
-            
-            await LicenseKey.create({
-                key_prefix: rawKey.slice(0, 8).toUpperCase(),
-                key_hash: hash,
-                tier: 'admin',
-                label: 'AUTO-GENERATED ADMIN',
-                expires_at: null
-            });
-            console.log('✅ [Seeder] DEFAULT ADMIN CREATED: ' + rawKey);
-            console.log('👉 [Seeder] Use this key to log into the app.');
-        }
-    } catch (err) {
-        console.error('❌ [Seeder] Failed:', err.message);
-    }
-}
-
+// ── Application Instance ──────────────────────────────────────────────────────
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ---------------------------------------------------------------------------
-// Security & Basic Middleware
-// ---------------------------------------------------------------------------
-app.use(helmet());
-app.use(cors()); // Allow all origins for Desktop Client
+// ── Server State (shared via app.locals for routes) ──────────────────────────
+let MINIMUM_VERSION   = '1.1.12';
+let LATEST_VERSION    = '1.1.12';
+let MAINTENANCE_MODE  = false;
+let WELCOME_MESSAGE   = 'Welcome to Valorant Companion — Built by ENG Salah Mohamed.';
+const DOWNLOAD_URL    = process.env.DOWNLOAD_URL || 'https://sasa120120.itch.io/valorant-companion-app';
+
+// Expose getters via app.locals (used by route modules)
+app.locals.getMinVersion  = () => MINIMUM_VERSION;
+app.locals.getDownloadUrl = () => DOWNLOAD_URL;
+
+// ── Security Middleware ───────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: false, // Desktop client API — no browser CSP needed
+}));
+
+// CORS: Restrict to known origins in production
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : null;
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Desktop app sends no Origin header — allow null/undefined
+    if (!origin) return callback(null, true);
+    if (!allowedOrigins || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: Origin ${origin} not allowed`));
+  },
+  methods: ['GET', 'POST'],
+}));
+
 app.use(express.json({ limit: '16kb' }));
 app.set('trust proxy', 1);
 
-// ── Welcome Message Injection (Global) ──
-let GLOBAL_WELCOME_MESSAGE = "Welcome to VC! Developed by Egyptian developer ENG Salah Mohamed.";
+// ── Global Rate Limiter (fallback) ────────────────────────────────────────────
+const globalLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 30_000,
+  max:      parseInt(process.env.RATE_LIMIT_MAX) || 60,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { error: 'rate_limited', message: 'Too many requests. Please slow down.' },
+});
+app.use(globalLimiter);
+
+// ── Request Logger (health/ping only) ────────────────────────────────────────
+app.use((req, res, next) => {
+  if (req.path === '/health' || req.path === '/ping') {
+    const v = req.headers['x-app-version'] || 'unknown';
+    console.log(`[Handshake] ${req.method} ${req.path} — IP: ${req.ip} — v${v}`);
+  }
+  next();
+});
+
+// ── Welcome Message Injection ─────────────────────────────────────────────────
+// Only inject on non-error, non-binary responses
 app.use((req, res, next) => {
   const originalJson = res.json.bind(res);
   res.json = (body) => {
-    if (body && typeof body === 'object' && !Array.isArray(body)) {
-      body.welcome_message = GLOBAL_WELCOME_MESSAGE;
+    if (body && typeof body === 'object' && !Array.isArray(body) && res.statusCode < 400) {
+      body.welcome_message = WELCOME_MESSAGE;
     }
     return originalJson(body);
   };
   next();
 });
 
-
-// Debug Log for Handshakes (Diagnostic Mode)
+// ── Maintenance Mode Gate ─────────────────────────────────────────────────────
 app.use((req, res, next) => {
-  if (req.path === '/health' || req.path === '/ping') {
-    console.log(`[Handshake] ${req.method} ${req.path} from ${req.ip} (Version: ${req.headers['x-app-version']})`);
+  if (MAINTENANCE_MODE && req.path !== '/health' && req.path !== '/ping') {
+    return res.status(503).json({
+      error:   'maintenance',
+      message: 'Server is under maintenance. Please try again later.',
+    });
   }
   next();
 });
 
-// ---------------------------------------------------------------------------
-// Global State & Versioning
-// ---------------------------------------------------------------------------
-let MINIMUM_VERSION = '1.1.12';
-let LATEST_VERSION  = '1.1.12';
-let MAINTENANCE_MODE = false;
-const MANDATORY_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://sasa120120.itch.io/valorant-companion-app';
+// ── Version Gate Middleware ───────────────────────────────────────────────────
+app.use(createVersionGate(() => MINIMUM_VERSION, () => DOWNLOAD_URL));
 
-// ---------------------------------------------------------------------------
-// Helper Functions
-// ---------------------------------------------------------------------------
-function compareVersions(v1, v2) {
-  const p1 = v1.split('.').map(Number);
-  const p2 = v2.split('.').map(Number);
-  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
-    const a = p1[i] || 0;
-    const b = p2[i] || 0;
-    if (a > b) return 1;
-    if (a < b) return -1;
+// ── Health / Ping ─────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  const dbState = mongoose.connection.readyState;
+  const dbStatus = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+  res.json({
+    status:      'ok',
+    db:          dbStatus[dbState] || 'unknown',
+    maintenance: MAINTENANCE_MODE,
+    version:     MINIMUM_VERSION,
+    uptime:      Math.floor(process.uptime()),
+  });
+});
+
+app.get('/ping', (req, res) => {
+  res.json({ ok: true, version: MINIMUM_VERSION, ts: Date.now() });
+});
+
+// ── Route Modules ─────────────────────────────────────────────────────────────
+app.use('/', clientRoutes);     // /pricing, /check-update, /validate-key, /heartbeat, etc.
+app.use('/admin', adminRoutes); // /admin/stats, /admin/keys, etc.
+
+// ── 404 & Error Handlers ──────────────────────────────────────────────────────
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+// ── Database Seeder ───────────────────────────────────────────────────────────
+async function seedDatabase() {
+  try {
+    const count = await LicenseKey.countDocuments();
+    if (count === 0) {
+      console.log('[Seeder] Empty DB — creating default admin key...');
+      const rand   = crypto.randomBytes(16).toString('hex').toUpperCase();
+      const rawKey = 'VA-' + rand.slice(0, 8) + '-' + rand.slice(8, 24);
+      const hash   = await bcrypt.hash(rawKey, 10);
+
+      await LicenseKey.create({
+        key_prefix: rawKey.slice(0, 8).toUpperCase(),
+        key_hash:   hash,
+        tier:       'admin',
+        label:      'AUTO-GENERATED ADMIN',
+        expires_at: null,
+      });
+
+      console.log('[Seeder] ===================================');
+      console.log('[Seeder] DEFAULT ADMIN KEY: ' + rawKey);
+      console.log('[Seeder] Save this — it will NOT be shown again.');
+      console.log('[Seeder] ===================================');
+    }
+  } catch (err) {
+    console.error('[Seeder] Failed:', err.message);
   }
-  return 0;
 }
 
-async function requireAdminKey(req, res, next) {
-  const key = req.headers['x-admin-key'] || req.body?.admin_key || req.query.key;
-  const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'c636cf706ff8efef3920328c9248bc566e17a4313b04243ff679a4f5584d67ad';
-  if (!key || key !== ADMIN_API_KEY) {
-    return res.status(401).json({ error: 'unauthorized', message: 'Invalid Admin API Key' });
-  }
-  next();
-}
-
-const sseClients = new Map();
-const adminSseClients = new Map();
-
-function broadcastToAll(eventName, payload) {
-  const data = JSON.stringify(payload);
-  for (const [id, client] of sseClients) {
-    try { client.res.write(`event: ${eventName}\ndata: ${data}\n\n`); }
-    catch { sseClients.delete(id); }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Core Logic: Version Sync & DB
-// ---------------------------------------------------------------------------
+// ── Version Sync ──────────────────────────────────────────────────────────────
 async function syncVersion() {
   try {
     const config = await AppVersion.findOne({ is_active: true }).sort({ released_at: -1 }).lean();
-    if (config && config.version) {
+    if (config?.version) {
       MINIMUM_VERSION = config.version;
-      LATEST_VERSION = config.version;
-      console.log(`[Server] Version Sync: v${MINIMUM_VERSION}`);
+      LATEST_VERSION  = config.version;
     }
-    
-    const welcome = await ServerConfig.findOne({ key: 'welcome_message' });
-    if (welcome) GLOBAL_WELCOME_MESSAGE = welcome.value;
-    
-    const maint = await ServerConfig.findOne({ key: 'maintenance_mode' });
-    MAINTENANCE_MODE = maint ? maint.value === true : false;
+
+    const welcome = await ServerConfig.findOne({ key: 'welcome_message' }).lean();
+    if (welcome?.value) {
+      WELCOME_MESSAGE = welcome.value;
+      app.locals.welcomeMessage = welcome.value;
+    }
+
+    const maint = await ServerConfig.findOne({ key: 'maintenance_mode' }).lean();
+    MAINTENANCE_MODE = maint?.value === true;
+
   } catch (err) {
-    console.log(`[Server] Version Sync Fallback: v${MINIMUM_VERSION}`);
+    console.warn('[SyncVersion] Fallback — using in-memory version:', MINIMUM_VERSION);
   }
 }
 
+// Expose syncVersion for admin routes
+app.locals.syncVersion = syncVersion;
+
+// ── Database Connection ───────────────────────────────────────────────────────
 async function connectDB() {
-  // ── Database Connection ──────────────────────────────────────────────
-  mongoose.connect(process.env.MONGODB_URI).then(async () => {
-      console.log('✅ [MongoDB] Connected and Ready');
-      await seedDatabase();
-      await syncVersion();
-  }).catch(err => {
-      console.error('❌ [MongoDB] Failed Connection:', err.message);
-  });
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+      connectTimeoutMS: 10000,
+    });
+    console.log('[MongoDB] Connected');
+    await seedDatabase();
+    await syncVersion();
+  } catch (err) {
+    console.error('[MongoDB] Connection failed:', err.message);
+    // Non-fatal: server still responds; DB ops will fail gracefully
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
+// ── Background Jobs ───────────────────────────────────────────────────────────
+// Session cleanup: mark stale sessions inactive
+const HEARTBEAT_TIMEOUT = parseInt(process.env.HEARTBEAT_TIMEOUT_SECONDS || '180') * 1000;
 
-// Version Gate Middleware
-app.use((req, res, next) => {
-  const EXEMPT = ['/health', '/ping', '/check-update', '/pricing', '/admin'];
-  if (EXEMPT.some(p => req.path.startsWith(p))) return next();
-  
-  const clientV = (req.headers['x-app-version'] || req.body?.app_version || '0.0.0').replace(/[^0-9.]/g, '');
-  if (compareVersions(clientV, MINIMUM_VERSION) < 0) {
-    return res.status(426).json({
-      error: 'update_required',
-      minimum_version: MINIMUM_VERSION,
-      download_url: MANDATORY_DOWNLOAD_URL
-    });
-  }
-  next();
-});
-
-app.get('/health', (req, res) => res.json({ status: 'ok', maintenance: MAINTENANCE_MODE, version: MINIMUM_VERSION }));
-app.get('/ping', (req, res) => res.json({ ok: true, version: MINIMUM_VERSION }));
-
-app.get('/check-update', async (req, res) => {
-  const v = (req.query.v || '0.0.0').replace(/[^0-9.]/g, '');
-  const needsUpdate = compareVersions(v, MINIMUM_VERSION) < 0;
-  res.json({
-    update_available: needsUpdate,
-    latest_version: MINIMUM_VERSION,
-    is_mandatory: true,
-    download_url: MANDATORY_DOWNLOAD_URL
-  });
-});
-
-app.post('/validate-key', async (req, res) => {
-  const { key, hwid } = req.body;
-  if (!key || !hwid) return res.status(400).json({ error: 'Missing parameters' });
-  try {
-    const keyPrefix = key.substring(0, 8).toUpperCase();
-    const candidate = await LicenseKey.findOne({ key_prefix: keyPrefix, is_active: true, is_banned: false });
-    if (!candidate) return res.status(401).json({ error: 'Invalid key' });
-    
-    const match = await bcrypt.compare(key.trim().toUpperCase(), candidate.key_hash);
-    if (!match) return res.status(401).json({ error: 'Invalid key' });
-
-    await Activation.findOneAndUpdate(
-      { license_key_id: candidate._id, hwid },
-      { $set: { is_active: true, last_heartbeat: new Date() } },
-      { upsert: true }
-    );
-    
-    res.json({ valid: true, tier: candidate.tier, expires_at: candidate.expires_at });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ---------------------------------------------------------------------------
-// Client Routes
-// ---------------------------------------------------------------------------
-
-app.get('/pricing', async (req, res) => {
-  try {
-    const config = await ServerConfig.findOne({ key: 'pricing' });
-    if (config) return res.json(config.value);
-    
-    // Default fallback
-    res.json({
-      daily_egp: "50", daily_usd: "5",
-      weekly_egp: "250", weekly_usd: "15",
-      monthly_egp: "800", monthly_usd: "40"
-    });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/submit-order', async (req, res) => {
-  try {
-    const { plan } = req.body;
-    
-    // Default pricing if not in DB
-    let pricing = {
-      daily_egp: "50", daily_usd: "5",
-      weekly_egp: "250", weekly_usd: "15",
-      monthly_egp: "800", monthly_usd: "40"
-    };
-
-    const config = await ServerConfig.findOne({ key: 'pricing' });
-    if (config) pricing = config.value;
-
-    let priceEgp = 0;
-    let priceUsd = "";
-
-    switch(plan) {
-      case 'daily':
-        priceEgp = parseInt(pricing.daily_egp);
-        priceUsd = pricing.daily_usd;
-        break;
-      case 'weekly':
-        priceEgp = parseInt(pricing.weekly_egp);
-        priceUsd = pricing.weekly_usd;
-        break;
-      case 'monthly':
-        priceEgp = parseInt(pricing.monthly_egp);
-        priceUsd = pricing.monthly_usd;
-        break;
-      default:
-        priceEgp = parseInt(pricing.daily_egp);
-        priceUsd = pricing.daily_usd;
-        break;
-    }
-
-    const order = await Order.create({
-      ...req.body,
-      price_egp: priceEgp,
-      price_usd: priceUsd,
-      ip_address: req.ip,
-      created_at: new Date()
-    });
-    res.json({ ok: true, order_id: order._id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/submit-complaint', async (req, res) => {
-  try {
-    const complaint = await Complaint.create({
-      ...req.body,
-      ip_address: req.ip,
-      created_at: new Date()
-    });
-    res.json({ ok: true, complaint_id: complaint._id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/heartbeat', async (req, res) => {
-  const { key, hwid, app_version } = req.body;
-  if (!key || !hwid) return res.status(400).json({ error: 'Missing parameters' });
-  try {
-    const keyPrefix = key.substring(0, 8).toUpperCase();
-    const candidate = await LicenseKey.findOne({ key_prefix: keyPrefix });
-    if (!candidate) return res.status(401).json({ error: 'Invalid key' });
-
-    await Activation.findOneAndUpdate(
-      { license_key_id: candidate._id, hwid },
-      { $set: { last_heartbeat: new Date(), app_version, is_active: true } },
-      { upsert: true }
-    );
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/performance', async (req, res) => {
-  try {
-    await PerformanceMetric.create({
-      ...req.body,
-      recorded_at: new Date()
-    });
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ---------------------------------------------------------------------------
-// Admin Routes (require x-admin-key)
-// ---------------------------------------------------------------------------
-
-app.get('/admin/stats', requireAdminKey, async (req, res) => {
-  try {
-    const [totalKeys, activeKeys, expiredKeys, revokedKeys, activeSessions, pendingOrders, totalOrders] = await Promise.all([
-      LicenseKey.countDocuments(),
-      LicenseKey.countDocuments({ is_active: true, is_banned: false }),
-      LicenseKey.countDocuments({ expires_at: { $lt: new Date() }, expires_at: { $ne: null } }),
-      LicenseKey.countDocuments({ is_active: false }),
-      Activation.countDocuments({ is_active: true }),
-      Order.countDocuments({ status: 'pending' }),
-      Order.countDocuments()
-    ]);
-
-    res.json({
-      totalKeys, activeKeys, expiredKeys, revokedKeys,
-      activeSessions, pendingOrders, totalOrders
-    });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/admin/keys', requireAdminKey, async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 50;
-    const skip = parseInt(req.query.skip) || 0;
-    const keys = await LicenseKey.find().sort({ created_at: -1 }).limit(limit).skip(skip).lean();
-    res.json({ keys });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/generate-key', requireAdminKey, async (req, res) => {
-  const { tier, label, duration_days } = req.body;
-  if (!tier) return res.status(400).json({ error: 'Tier required' });
-  
-  try {
-    const rand = crypto.randomBytes(16).toString('hex').toUpperCase();
-    const rawKey = 'VC-' + rand.slice(0, 8) + '-' + rand.slice(8, 24);
-    const hash = await bcrypt.hash(rawKey, 10);
-    
-    let expiresAt = null;
-    if (duration_days > 0) {
-      expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + duration_days);
-    }
-
-    const keyDoc = await LicenseKey.create({
-      key_prefix: rawKey.slice(0, 8).toUpperCase(),
-      key_hash: hash,
-      tier,
-      label: label || 'Generated via Admin',
-      expires_at: expiresAt,
-      created_at: new Date()
-    });
-
-    res.json({ ok: true, key: rawKey, key_id: keyDoc._id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/revoke-key', requireAdminKey, async (req, res) => {
-  const { key_id } = req.body;
-  try {
-    await LicenseKey.findByIdAndUpdate(key_id, { is_active: false });
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/ban-key', requireAdminKey, async (req, res) => {
-  const { key_id } = req.body;
-  try {
-    await LicenseKey.findByIdAndUpdate(key_id, { is_active: false, is_banned: true });
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/unbind-hwid', requireAdminKey, async (req, res) => {
-  const { key_id } = req.body;
-  try {
-    await LicenseKey.findByIdAndUpdate(key_id, { hwid: null });
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/delete-key', requireAdminKey, async (req, res) => {
-  const { key_id } = req.body;
-  try {
-    await LicenseKey.findByIdAndDelete(key_id);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/adjust-key-duration', requireAdminKey, async (req, res) => {
-  const { key_id, days } = req.body;
-  try {
-    const key = await LicenseKey.findById(key_id);
-    if (!key) return res.status(404).json({ error: 'Key not found' });
-    
-    if (key.expires_at) {
-      key.expires_at = new Date(key.expires_at.getTime() + (days * 24 * 60 * 60 * 1000));
-      await key.save();
-    }
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/pin-hwid', requireAdminKey, (req, res) => {
-  res.json({ ok: true, message: 'HWID pinning updated' });
-});
-
-app.get('/admin/orders', requireAdminKey, async (req, res) => {
-  try {
-    const { status } = req.query;
-    const filter = status ? { status } : {};
-    const orders = await Order.find(filter).sort({ created_at: -1 }).lean();
-    res.json({ orders });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/update-order', requireAdminKey, async (req, res) => {
-  const { order_id, status } = req.body;
-  try {
-    await Order.findByIdAndUpdate(order_id, { status, completed_at: status === 'completed' ? new Date() : null });
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/admin/complaints', requireAdminKey, async (req, res) => {
-  try {
-    const { status } = req.query;
-    const filter = status && status !== 'all' ? { status } : {};
-    const complaints = await Complaint.find(filter).sort({ created_at: -1 }).lean();
-    res.json({ complaints });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/update-complaint', requireAdminKey, async (req, res) => {
-  const { complaint_id, status, reply } = req.body;
-  try {
-    const update = { status };
-    if (reply) {
-      update.admin_reply = reply;
-      if (status === 'open') update.status = 'in_progress';
-    }
-    await Complaint.findByIdAndUpdate(complaint_id, update);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/update-pricing', requireAdminKey, async (req, res) => {
-  try {
-    await ServerConfig.findOneAndUpdate(
-      { key: 'pricing' },
-      { $set: { value: req.body, updated_at: new Date() } },
-      { upsert: true }
-    );
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/admin/current-version', requireAdminKey, (req, res) => {
-  res.json({ version: MINIMUM_VERSION });
-});
-
-app.post('/admin/publish-version', requireAdminKey, async (req, res) => {
-  const { version, is_mandatory, release_notes } = req.body;
-  try {
-    await AppVersion.updateMany({}, { is_active: false });
-    await AppVersion.create({ 
-      version, 
-      is_mandatory: is_mandatory || false,
-      release_notes: release_notes || `Version ${version} published by admin.`,
-      is_active: true, 
-      released_at: new Date(), 
-      download_url: MANDATORY_DOWNLOAD_URL 
-    });
-    await syncVersion();
-    res.json({ ok: true, version });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// ---------------------------------------------------------------------------
-// Background Tasks
-// ---------------------------------------------------------------------------
-connectDB();
-setInterval(syncVersion, 60000);
 cron.schedule('*/5 * * * *', async () => {
-  const threshold = new Date(Date.now() - 300000);
-  await Activation.updateMany({ last_heartbeat: { $lt: threshold } }, { $set: { is_active: false } });
+  try {
+    const threshold = new Date(Date.now() - HEARTBEAT_TIMEOUT);
+    const result = await Activation.updateMany(
+      { last_heartbeat: { $lt: threshold }, is_active: true },
+      { $set: { is_active: false } }
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`[Cron] Deactivated ${result.modifiedCount} stale sessions`);
+    }
+  } catch (err) {
+    console.error('[Cron] Session cleanup error:', err.message);
+  }
 });
 
-// ---------------------------------------------------------------------------
-// SERVER START (Instant & Direct for Railway)
-// ---------------------------------------------------------------------------
+// Version sync every 60 seconds
+const versionSyncInterval = setInterval(syncVersion, 60_000);
+
+// ── Graceful Shutdown ─────────────────────────────────────────────────────────
+process.on('SIGTERM', async () => {
+  console.log('[Server] SIGTERM received — shutting down gracefully...');
+  clearInterval(versionSyncInterval);
+  await mongoose.connection.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('[Server] SIGINT received — shutting down...');
+  clearInterval(versionSyncInterval);
+  await mongoose.connection.close();
+  process.exit(0);
+});
+
+// ── Start Server ──────────────────────────────────────────────────────────────
+connectDB();
+
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`============================================`);
-    console.log(` VALORANT COMPANION BACKEND (v1.1.11)`);
-    console.log(` Listening on : http://0.0.0.0:${PORT}`);
-    console.log(` Environment  : Railway Production`);
-    console.log(` Status       : Root /health & / OK`);
-    console.log(`============================================`);
+  console.log('============================================');
+  console.log(` VALORANT COMPANION BACKEND  v${MINIMUM_VERSION}`);
+  console.log(` Port       : ${PORT}`);
+  console.log(` Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(` Routes     : /health /ping /validate-key /admin/*`);
+  console.log('============================================');
 });
