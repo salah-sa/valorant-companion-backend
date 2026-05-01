@@ -2,7 +2,9 @@
 // ── ValorantCompanion Backend — Production Server v1.1.12 ───────────────────
 // Refactored: modular routes, timing-safe auth, input validation, error handling
 
-require('dotenv').config({ path: require('path').join(__dirname, '../config/.env') });
+// Load .env from project root (local dev). On Railway, env vars are injected natively.
+// Silent no-op when file is absent — never crashes production.
+try { require('dotenv').config(); } catch (_) {}
 
 const express   = require('express');
 const mongoose  = require('mongoose');
@@ -184,8 +186,15 @@ app.locals.syncVersion = syncVersion;
 
 // ── Database Connection ───────────────────────────────────────────────────────
 async function connectDB() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    console.error('[MongoDB] FATAL: MONGODB_URI environment variable is not set.');
+    console.error('[MongoDB] Set it in Railway → Variables, or in config/.env for local dev.');
+    // Server still starts and /health responds — Railway won't crash-loop
+    return;
+  }
   try {
-    await mongoose.connect(process.env.MONGODB_URI, {
+    await mongoose.connect(uri, {
       serverSelectionTimeoutMS: 10000,
       connectTimeoutMS: 10000,
     });
