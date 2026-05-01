@@ -1,0 +1,20 @@
+[build]
+builder = "nixpacks"
+buildCommand = "npm install"
+
+[deploy]
+startCommand = "node src/server.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+
+[env]
+NODE_ENV = "production"
+RATE_LIMIT_WINDOW_MS = "30000"
+RATE_LIMIT_MAX = "5"
+HEARTBEAT_TIMEOUT_SECONDS = "180"
+MONGODB_URI = "mongodb+srv://ValorantChampion:2BYnW4RvtkMsgp9@cluster0.odvfzoz.mongodb.net/"
+JWT_SECRET = "fd0fca6be3869475bcc0423ecd10bc45a7264e04157e65767383976a52e9e9589abd0399f439a95f6007f879f6bd7acbf40a1bbf66874d4e7ef5fa7788812cf3"
+ADMIN_API_KEY = "c636cf706ff8efef3920328c9248bc566e17a4313b04243ff679a4f5584d67ad"
+DOWNLOAD_URL = "https://sasa120120.itch.io/valorant-companion-app"
